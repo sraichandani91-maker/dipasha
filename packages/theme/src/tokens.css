@@ -1,0 +1,20 @@
+/**
+ * CSS custom properties mirroring tokens.ts, for the web console.
+ * PLACEHOLDER VALUES — see tokens.ts and ../README.md. Keep both files
+ * in sync manually; there are only two.
+ */
+:root {
+  --brand-green: #1E7D46;
+  --brand-green-dark: #14582F;
+  --brand-green-tint: #EAF6EE;
+
+  --surface: #FFFFFF;
+  --text-primary: #1A1A1A;
+  --text-secondary: #5F6B66;
+  --border: #E1E6E3;
+
+  --status-good: #2F9E44;
+  --status-warn: #E8A317;
+  --status-bad: #D64545;
+  --status-info: #2B6CB0;
+}

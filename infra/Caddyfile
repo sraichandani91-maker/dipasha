@@ -1,0 +1,10 @@
+{$DOMAIN} {
+	encode gzip
+
+	reverse_proxy api:3000
+
+	log {
+		output stdout
+		format console
+	}
+}

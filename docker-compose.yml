@@ -1,0 +1,62 @@
+name: dipasha
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dipasha}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-dipasha}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dipasha} -d ${POSTGRES_DB:-dipasha}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      # Bound to localhost only — Postgres is never exposed to the public
+      # internet (Section 12B.5). Remove entirely once deploying to a real
+      # VPS; this is for local development convenience only.
+      - "127.0.0.1:5432:5432"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-dipasha}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dipasha}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  # Reverse proxy with automatic Let's Encrypt TLS. Not needed for local
+  # dev (hit the api container directly on :3000). Bring it up with:
+  #   docker compose --profile proxy up -d
+  # once DOMAIN in .env points at this host's public IP (Section 12B.1).
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env, e.g. app.dipashamedicalstore.in}
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
