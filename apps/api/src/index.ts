@@ -2,6 +2,14 @@ import { buildServer } from "./server.js";
 import { config } from "./config.js";
 import { pool } from "./db.js";
 
+// Fail fast and loud, not on the first login attempt in front of a
+// customer. A blank JWT_SECRET would otherwise sign every token with an
+// empty key.
+if (config.nodeEnv === "production" && !config.jwtSecret) {
+  console.error("JWT_SECRET is not set. Refusing to start in production. See .env.example.");
+  process.exit(1);
+}
+
 const app = buildServer();
 
 async function shutdown(signal: string) {

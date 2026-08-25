@@ -1,6 +1,9 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { config } from "./config.js";
 import { pingDatabase } from "./db.js";
+import authPlugin from "./plugins/auth.js";
+import authRoutes from "./routes/auth.js";
+import productRoutes from "./routes/products.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -13,8 +16,10 @@ export function buildServer(): FastifyInstance {
     },
   });
 
-  // Liveness/readiness probe. M1 will add auth, role checks, and real
-  // business endpoints behind this same server instance.
+  app.register(authPlugin);
+  app.register(authRoutes);
+  app.register(productRoutes);
+
   app.get("/health", async (_req, reply) => {
     const dbOk = await pingDatabase().catch(() => false);
     const body = {
