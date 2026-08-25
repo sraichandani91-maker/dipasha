@@ -4,6 +4,9 @@ import { pingDatabase } from "./db.js";
 import authPlugin from "./plugins/auth.js";
 import authRoutes from "./routes/auth.js";
 import productRoutes from "./routes/products.js";
+import saltRoutes from "./routes/salts.js";
+import binRoutes from "./routes/bins.js";
+import searchRoutes from "./routes/search.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -19,6 +22,9 @@ export function buildServer(): FastifyInstance {
   app.register(authPlugin);
   app.register(authRoutes);
   app.register(productRoutes);
+  app.register(saltRoutes);
+  app.register(binRoutes);
+  app.register(searchRoutes);
 
   app.get("/health", async (_req, reply) => {
     const dbOk = await pingDatabase().catch(() => false);

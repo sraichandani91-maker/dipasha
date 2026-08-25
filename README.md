@@ -4,18 +4,17 @@ Backend + web console + (later) Android staff app for a retail pharmacy running 
 
 Built milestone by milestone per the agreed build order — see `DECISIONS.md` for what's been decided at each step, and don't skip ahead of the current milestone.
 
-## Status: M1 — data model, migrations, auth, role framework
+## Status: M2 — product master, bin master, label printing, unified search
 
 What exists right now:
-- `apps/api` — Fastify + TypeScript API: `/health`, phone+OTP login, JWT access/refresh, PIN idle-lock re-auth, owner impersonation, and a role-gated `/products` endpoint (see `apps/api/MIGRATIONS.md` and `DECISIONS.md`)
-- Full M1 schema: settings, users/roles, salt master, product master + composition child table, bin master, batches, and the append-only movement ledger (all 9 `movement_type` values, DB-trigger-enforced immutability, on-hand stock as a derived `VIEW`, never a stored column)
+- `apps/web` — the first real UI. React + Vite console: phone+OTP login, product master (list + create, with salt-master autocomplete and duplicate detection), bin master (list + create), the unified search of Section 5B (one bar, brand-or-salt, substitute grouping, out-of-stock still shown), a printable A4 bin-label sheet download, and owner role-impersonation with a visible banner
+- `apps/api` — Fastify + TypeScript API: `/health`, phone+OTP login, JWT access/refresh, PIN idle-lock re-auth, owner impersonation, role-gated `/products`, product/bin CRUD, `/search`, and bin label-sheet PDF generation (see `apps/api/MIGRATIONS.md` and `DECISIONS.md`)
+- Full data model: settings, users/roles, salt master, product master + composition child table, bin master, batches, search log, and the append-only movement ledger (all 9 `movement_type` values, DB-trigger-enforced immutability, on-hand stock as a derived `VIEW`, never a stored column)
 - Seed script: 4 role users, 25 salts, 50 dummy SKUs (auto-grouped into real substitute groups), 59 bins across every zone prefix, batches with opening stock
 - `packages/theme` — shared design tokens (estimated from the real logo/site screenshot — see `packages/theme/README.md`)
-- Docker Compose: Postgres + API + Caddy (automatic HTTPS reverse proxy)
-- CI: typecheck, build, and a Docker smoke test on every push
+- Docker Compose: Postgres + API + web (nginx) + Caddy (automatic HTTPS, path-split `/api/*` vs the console)
+- CI: typecheck, build, and a Docker smoke test for both the api and web images on every push
 - `deploy.sh` + `RUNBOOK.md`: how to actually get this running on a VPS
-
-No UI yet — M1 is backend only. First screens arrive at M2 (bin labels, unified search) and M4 (POS).
 
 ## Repo layout
 
@@ -26,10 +25,11 @@ apps/
     scripts/seed.ts  Dev seed data — 50 SKUs, bins, batches, opening stock
     src/domain/   Business rules shared across routes/seed (e.g. substitute grouping)
     MIGRATIONS.md How the migration/seed workflow works
+  web/            React + Vite owner/staff console
 packages/
   theme/          Shared design tokens (colors, spacing) — web + app both import this
 infra/
-  Caddyfile       Reverse proxy config (templated with $DOMAIN)
+  Caddyfile       Reverse proxy config (templated with $DOMAIN, splits /api/* from the console)
 docker-compose.yml
 deploy.sh         Deploy script for the VPS
 RUNBOOK.md        How to deploy and operate this, without needing me
@@ -44,11 +44,11 @@ docker compose up -d postgres
 npm install
 npm run migrate:up --workspace apps/api
 npm run seed --workspace apps/api   # optional: 50 dummy SKUs to test against
-npm run dev:api
-curl http://localhost:3000/health
+npm run dev:api                     # terminal 1 — API on :3000
+npm run dev --workspace apps/web    # terminal 2 — console on :5173, proxies /api to :3000
 ```
 
-Log in as the seeded owner: `POST /auth/otp/request {"phone":"+919999900001"}` — in development the response includes `devCode` (no real SMS provider is wired up yet), then `POST /auth/otp/verify {"phone":"+919999900001","code":"<devCode>"}` for a JWT. PIN for all seeded users is `1234`.
+Open http://localhost:5173. Log in as the seeded owner with phone `+919999900001` — in development the OTP screen shows the code directly (no real SMS provider is wired up yet). PIN for all seeded users is `1234`.
 
 ## Full stack via Docker
 
@@ -56,11 +56,12 @@ Log in as the seeded owner: `POST /auth/otp/request {"phone":"+919999900001"}` �
 cp .env.example .env   # set POSTGRES_PASSWORD and JWT_SECRET at minimum
 docker compose up -d --build
 docker compose exec api npm run migrate:up --workspace apps/api
-curl http://localhost:3000/health
+curl http://localhost:3000/health   # api
+curl http://localhost:8080/         # web console
 ```
 
 See `RUNBOOK.md` for deploying to a real VPS with HTTPS on a subdomain.
 
 ## Build order
 
-Milestones M0–M16 as agreed. Each one gets built, tested by the owner, then the next starts — no skipping ahead, no scope creep beyond what's specified. Current milestone: **M1**, done pending sign-off. Next: **M2** — product master + bin master + label printing, product creation with the salt master, and the unified search of Section 5B.
+Milestones M0–M16 as agreed. Each one gets built, tested by the owner, then the next starts — no skipping ahead, no scope creep beyond what's specified. Current milestone: **M2**, done pending sign-off. Next: **M3** — manual GST purchase entry, `stock_received`, put-away with scanning.

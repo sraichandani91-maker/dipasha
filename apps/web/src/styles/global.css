@@ -1,0 +1,186 @@
+@import "@dipasha/theme/src/tokens.css";
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text-primary);
+  background: var(--surface);
+  font-size: 14px;
+}
+
+/* -- Chrome: brand green lives here, per Section 12C.1 -- */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.topbar {
+  background: var(--brand-green);
+  color: #fff;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.topbar .brand { font-weight: 700; font-size: 16px; }
+.topbar nav { display: flex; gap: 4px; margin-left: 24px; }
+.topbar nav button {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.85);
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.topbar nav button.active { background: var(--brand-green-dark); color: #fff; }
+.topbar nav button:hover:not(.active) { background: rgba(255,255,255,0.12); }
+.topbar .spacer { flex: 1; }
+.topbar .who { font-size: 12px; color: rgba(255,255,255,0.85); text-align: right; }
+.topbar .impersonating {
+  background: var(--status-warn);
+  color: #1a1a1a;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 8px;
+}
+
+.btn-primary {
+  background: var(--brand-green);
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-primary:hover { background: var(--brand-green-dark); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-secondary:hover { background: var(--brand-green-tint); }
+
+/* -- Data surfaces: white background, near-black text, no decorative colour -- */
+.content {
+  flex: 1;
+  padding: 24px;
+  background: var(--surface);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+table.data-table th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+table.data-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+table.data-table tr:nth-child(even) { background: var(--brand-green-tint); }
+
+input, select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--surface);
+}
+input:focus, select:focus { outline: 2px solid var(--brand-green); outline-offset: 1px; }
+
+label { font-size: 12px; color: var(--text-secondary); font-weight: 600; display: block; margin-bottom: 4px; }
+
+.field { margin-bottom: 12px; }
+
+/* -- Status colour: means something wherever it appears, never decoration -- */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+.badge-good { background: color-mix(in srgb, var(--status-good) 15%, white); color: var(--status-good); }
+.badge-warn { background: color-mix(in srgb, var(--status-warn) 18%, white); color: color-mix(in srgb, var(--status-warn) 70%, black); }
+.badge-bad { background: color-mix(in srgb, var(--status-bad) 15%, white); color: var(--status-bad); }
+.badge-info { background: color-mix(in srgb, var(--status-info) 15%, white); color: var(--status-info); }
+.badge-neutral { background: #f0f0f0; color: var(--text-secondary); }
+
+.stock-out { color: var(--status-bad); font-weight: 600; }
+.stock-ok { color: var(--text-primary); }
+
+.login-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--brand-green-tint);
+}
+.login-card {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 32px;
+  width: 340px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+}
+.login-card h1 { font-size: 18px; margin: 0 0 4px; color: var(--text-primary); }
+.login-card p.sub { color: var(--text-secondary); font-size: 12px; margin: 0 0 20px; }
+.error-text { color: var(--status-bad); font-size: 12px; margin-top: 8px; }
+.hint-text { color: var(--text-secondary); font-size: 11px; margin-top: 8px; }
+
+.search-bar {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 15px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+}
+.search-bar:focus { border-color: var(--brand-green); outline: none; }
+
+.substitute-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.substitute-group-header {
+  background: var(--brand-green-tint);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+}
+.substitute-group.exact { border-color: var(--brand-green); border-width: 2px; }

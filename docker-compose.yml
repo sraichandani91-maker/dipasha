@@ -36,10 +36,21 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
 
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+
   # Reverse proxy with automatic Let's Encrypt TLS. Not needed for local
-  # dev (hit the api container directly on :3000). Bring it up with:
+  # dev (hit the api/web containers directly on :3000/:8080). Bring it up
+  # with:
   #   docker compose --profile proxy up -d
   # once DOMAIN in .env points at this host's public IP (Section 12B.1).
+  # Caddy splits the one subdomain by path: /api/* to the api container,
+  # everything else to the web console's static build.
   caddy:
     image: caddy:2-alpine
     profiles: ["proxy"]
@@ -55,6 +66,7 @@ services:
       - "443:443"
     depends_on:
       - api
+      - web
 
 volumes:
   pgdata:

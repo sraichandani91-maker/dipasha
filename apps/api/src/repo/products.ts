@@ -107,3 +107,110 @@ export async function listProducts(limit: number, offset: number): Promise<Produ
     })) as any,
   }));
 }
+
+export interface CreateProductInput {
+  name: string;
+  manufacturer: string;
+  form: string;
+  scheduleCategory: string;
+  requiresPrescription: boolean;
+  hsnCode: string;
+  gstRate: number;
+  baseUnit: string;
+  packSize: number;
+  outerPackSize: number | null;
+  allowLooseSale: boolean;
+  looseSaleMarkupPercent: number;
+  isColdChain: boolean;
+  barcode: string | null;
+  compositions: Array<{ saltId: string; strength: string }>;
+  substituteGroupId: string;
+  status: "active" | "pending";
+  createdBy: string;
+}
+
+export interface DuplicateMatch {
+  id: string;
+  name: string;
+  manufacturer: string;
+  status: string;
+}
+
+// Section 6B.2: "warn if an existing SKU shares the same composition and
+// strength" — matched by the same substitute_group_id key (composition +
+// strength + form, exact match only, per Section 5B.4).
+export async function findProductsBySubstituteGroup(substituteGroupId: string): Promise<DuplicateMatch[]> {
+  const { rows } = await requirePool().query(
+    `SELECT id, name, manufacturer, status FROM products WHERE substitute_group_id = $1`,
+    [substituteGroupId]
+  );
+  return rows;
+}
+
+export async function createProduct(input: CreateProductInput): Promise<{ id: string }> {
+  const db = requirePool();
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `INSERT INTO products
+         (name, manufacturer, form, schedule_category, requires_prescription, hsn_code, gst_rate,
+          base_unit, pack_size, outer_pack_size, allow_loose_sale, loose_sale_markup_percent,
+          is_cold_chain, barcode, substitute_group_id, status, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       RETURNING id`,
+      [
+        input.name, input.manufacturer, input.form, input.scheduleCategory, input.requiresPrescription,
+        input.hsnCode, input.gstRate, input.baseUnit, input.packSize, input.outerPackSize,
+        input.allowLooseSale, input.looseSaleMarkupPercent, input.isColdChain, input.barcode,
+        input.substituteGroupId, input.status, input.createdBy,
+      ]
+    );
+    const productId = rows[0].id;
+    let position = 0;
+    for (const c of input.compositions) {
+      await client.query(
+        `INSERT INTO product_compositions (product_id, salt_id, strength, position) VALUES ($1, $2, $3, $4)`,
+        [productId, c.saltId, c.strength, position++]
+      );
+    }
+    await client.query("COMMIT");
+    return { id: productId };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export interface UpdateProductInput {
+  name?: string;
+  manufacturer?: string;
+  barcode?: string | null;
+  allowLooseSale?: boolean;
+  loosesSaleMarkupPercent?: number;
+  status?: "active" | "pending" | "inactive";
+}
+
+export async function updateProduct(id: string, input: UpdateProductInput): Promise<boolean> {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  let i = 1;
+  for (const [col, val] of Object.entries({
+    name: input.name,
+    manufacturer: input.manufacturer,
+    barcode: input.barcode,
+    allow_loose_sale: input.allowLooseSale,
+    loose_sale_markup_percent: input.loosesSaleMarkupPercent,
+    status: input.status,
+  })) {
+    if (val === undefined) continue;
+    sets.push(`${col} = $${i++}`);
+    values.push(val);
+  }
+  if (sets.length === 0) return false;
+  values.push(id);
+  const result = await requirePool().query(`UPDATE products SET ${sets.join(", ")} WHERE id = $${i}`, values);
+  return (result.rowCount ?? 0) > 0;
+}

@@ -26,6 +26,16 @@ Every business rule and open question we settle, in order. Per the ground rules 
 - **PIN re-entry (Section 3 idle-lock)** requires both a still-valid refresh token *and* the PIN — never the PIN alone — so a shoulder-surfed 4-digit code can't unlock a session without also holding the device's stored session.
 - Settings seeded in M1 are only the ones with a stated default already in scope for M1's own logic or explicitly given as a global default elsewhere in the doc (session lock timing, cycle count size, near-expiry pick block, etc.) — thresholds tied to a feature not yet built (e.g. write-off approval value) get added in that feature's own migration instead of guessed now.
 
-## Open questions carried forward (not blocking M1)
+## M2 — product master, bin master, label printing, unified search
+
+- **Web console scaffolded now** (`apps/web`, plain React + Vite, per the M0 decision) — first real UI, per Section 13's note that the web POS shell needs to exist well before M13. No router library yet (simple state-based tab switching); will add one once the console has enough screens to need it (M4+).
+- **Product creation duplicate detection is a 409, not a hard block** — matches Section 6A.9's general "no hard blocks" philosophy even though Section 6B.2 doesn't use that exact phrase for this case. The client shows the existing matches and can resubmit with `confirmDuplicate: true` to proceed anyway, or link a substitute instead.
+- **Auth tokens stored in `localStorage`** on the web console — pragmatic for an internal staff tool behind its own auth flow. Worth revisiting (httpOnly cookies + CSRF) if this console is ever exposed more broadly before the real deployment; flagged in `apps/web/src/api.ts`.
+- **Unified search ranking**: Postgres trigram similarity (`pg_trgm`) across product name/manufacturer and salt name/synonym, with a hand-tuned score threshold to decide brand-search vs salt-search mode. **Known limitation**: Section 5B.3's "multi-salt search: typing two salts matches combination products containing both" isn't implemented yet — current matching is single-term. Revisit if a real combination-drug search need shows up before then; not blocking M2's stated scope.
+- **Search's "brand exact match" pulls in the rest of its substitute group explicitly** — trigram matching alone won't find sibling brands that don't share text with the query (searching "dolo" doesn't lexically match "paracetamol"), so the search does a second lookup by `substitute_group_id` once a strong brand match is found. Caught this in testing before it shipped: the group-expansion header ("Paracetamol 650mg — 6 other brands in stock") was empty without it.
+- **Internal barcodes** (Section 9A.5) use a "290" GS1 restricted-circulation-number prefix, so they can never collide with a real manufacturer barcode added later.
+- **Bin label sheet**: A4, 3×8 grid, QR encodes the bin code (not an internal ID) so a scan resolves to something a human can also read off the printed label. Black and white only, per Section 12C.3 — no brand colour on anything meant for a thermal or laser printer.
+
+## Open questions carried forward (not blocking M2)
 
 - 🔧 Section 3: do riders get onboarded by the Store Manager in-app, or will you create their accounts yourself? Relevant starting M11 (rider role) — will ask again when we get there if not answered before.

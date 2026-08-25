@@ -1,7 +1,16 @@
 {$DOMAIN} {
 	encode gzip
 
-	reverse_proxy api:3000
+	# API first — everything under /api/* strips that prefix and goes to
+	# the api container. Everything else falls through to the web
+	# console's static build. Same split the local Vite dev proxy uses
+	# (apps/web/vite.config.ts), so the app talks to /api/* in both.
+	handle_path /api/* {
+		reverse_proxy api:3000
+	}
+	handle {
+		reverse_proxy web:80
+	}
 
 	log {
 		output stdout

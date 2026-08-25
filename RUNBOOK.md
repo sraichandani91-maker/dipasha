@@ -1,6 +1,6 @@
 # Runbook — deploying and operating Dipasha OS
 
-Written so you can deploy this without me. Covers M0 (this milestone): getting the API reachable over HTTPS on a subdomain. Backup/restore and monitoring are built out properly in M16 — this is the minimum for M0.
+Written so you can deploy this without me. Backup/restore and monitoring are built out properly in M16 — everything below is the minimum to get the API and web console reachable over HTTPS on one subdomain.
 
 ## What you're responsible for (Section 14)
 
@@ -29,15 +29,16 @@ Written so you can deploy this without me. Covers M0 (this milestone): getting t
 ./deploy.sh
 ```
 
-This pulls the latest commit on the current branch, builds the API image, runs pending migrations explicitly, brings up `postgres`, `api`, and `caddy` (the `proxy` profile), and waits for `/health` to report healthy.
+This pulls the latest commit on the current branch, builds the API and web images, runs pending migrations explicitly, brings up `postgres`, `api`, `web`, and `caddy` (the `proxy` profile), and waits for `/health` to report healthy.
 
-Caddy requests and auto-renews its own TLS certificate from Let's Encrypt on first boot — no manual certbot steps.
+Caddy requests and auto-renews its own TLS certificate from Let's Encrypt on first boot — no manual certbot steps. It splits the subdomain by path: `/api/*` goes to the api container, everything else to the web console (`infra/Caddyfile`).
 
 Verify:
 ```
-curl https://app.yourdomain.in/health
+curl https://app.yourdomain.in/api/health   # api
+curl https://app.yourdomain.in/             # web console
 ```
-Should return `{"status":"ok", ...}`.
+The health check should return `{"status":"ok", ...}`.
 
 ## Staging vs production
 
@@ -52,20 +53,23 @@ cp .env.example .env   # different POSTGRES_PASSWORD, different DOMAIN (e.g. sta
 
 Because `docker-compose.yml` uses the default project name `dipasha`, give the staging checkout its own directory (as above) so Docker doesn't collide the two stacks' volumes and networks. Never test a migration against production data first — always run it on staging.
 
-## Local development (no Docker required for the API itself)
+## Local development (no Docker required for the API or console)
 
 ```
 cp .env.example .env          # set DATABASE_URL to point at a local Postgres, or use Docker for just Postgres:
 docker compose up -d postgres
 npm install
-npm run dev:api
-curl http://localhost:3000/health
+npm run migrate:up --workspace apps/api
+npm run dev:api                     # terminal 1 — API on :3000
+npm run dev --workspace apps/web    # terminal 2 — console on :5173, proxies /api to :3000
 ```
+
+Open http://localhost:5173.
 
 ## Day-to-day operations
 
-- Logs: `docker compose logs -f api`
-- Restart: `docker compose restart api`
+- Logs: `docker compose logs -f api` (or `web`, `caddy`)
+- Restart: `docker compose restart api` (or `web`)
 - Shell into the API container: `docker compose exec api sh`
 - Run a migration by hand: `docker compose exec api npm run migrate:up --workspace apps/api`
 - Roll back the last migration: `docker compose exec api npm run migrate:down --workspace apps/api`
