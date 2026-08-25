@@ -2,11 +2,13 @@
 
 Single source of truth for colour, spacing and radius tokens, shared by the web console and the staff app (build order Section 12C.5: theme created in M0, before any screen exists).
 
-## ⚠️ Placeholder colours
+## ⚠️ Estimated colours, not pixel-sampled
 
-`src/tokens.ts` and `src/tokens.css` currently hold **placeholder** brand green / tint values, not the real palette from https://dipashamedicalstore.in/. This build environment cannot reach that domain (network egress is blocked to it), so the real hex codes were never extracted.
+`src/tokens.ts` and `src/tokens.css` hold values read **visually** off the logo and a homepage screenshot the owner provided — this build environment cannot reach dipashamedicalstore.in directly, so the real hex codes were never pulled from the live stylesheet. They should be close (button green, hero background tint, heading colour, body text grey), but they are estimates.
 
-**Before M2 (product master UI) ships**, replace every value in both files with the real values read from the live site's stylesheet — primary green, background tint, text colour, button accent — then delete the placeholder notices. Both files must stay in sync since there are only two of them.
+If pixel-perfect brand matching ever matters, open the site's CSS/inspector, read the exact hex codes, and replace the values in both files. Both must stay in sync since there are only two of them.
+
+**Logo vs. UI palette:** the logo mark itself uses a third colour — an orange-red — on the outer ring and one of the two pill capsules. The page chrome (buttons, headings, backgrounds) does not use it anywhere visible; it reads as white/green throughout, consistent with Section 12C. So orange isn't in these tokens. If a secondary accent is ever wanted (e.g. matching a WhatsApp-style CTA to the logo), that's a deliberate addition to make later, not an oversight now.
 
 ## The rule this file protects
 

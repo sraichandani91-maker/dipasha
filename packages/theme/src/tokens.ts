@@ -4,24 +4,25 @@
  * from here instead. See ../README.md for the rule this file exists to
  * protect: brand colour lives in chrome, status colour lives in data.
  *
- * PLACEHOLDER VALUES — REPLACE BEFORE M2 SHIP.
- * These were not read from https://dipashamedicalstore.in/ — this build
- * environment's network egress is blocked to that domain. Replace every
- * value below with the real hex codes from the site's stylesheet, then
- * delete this notice.
+ * ESTIMATED FROM SCREENSHOTS, NOT PIXEL-SAMPLED FROM CSS.
+ * This build environment cannot reach dipashamedicalstore.in directly, so
+ * these values were read visually off the logo and a homepage screenshot,
+ * not extracted from the live stylesheet. Close, but if pixel-perfect
+ * brand matching ever matters, pull the exact hex codes from the site's
+ * CSS/inspector and replace these. See ../README.md.
  */
 
 export const colors = {
   // -- Brand (chrome only: nav, primary buttons, active tabs, login) --
-  brandGreen: "#1E7D46",
-  brandGreenDark: "#14582F",
-  brandGreenTint: "#EAF6EE",
+  brandGreen: "#167A4B",
+  brandGreenDark: "#0F5C39",
+  brandGreenTint: "#EAF7F1",
 
   // -- Data surfaces --
   surface: "#FFFFFF",
   textPrimary: "#1A1A1A",
-  textSecondary: "#5F6B66",
-  border: "#E1E6E3",
+  textSecondary: "#5B6B63",
+  border: "#E3E8E5",
 
   // -- Status (deliberately distinct from brand green) --
   statusGood: "#2F9E44",
