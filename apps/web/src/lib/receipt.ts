@@ -21,17 +21,25 @@ export function buildReceiptHtml(sale: {
   const s = sale.sale;
   const isDuplicate = s.print_count > 1;
   const rows = sale.lines
-    .map(
-      (l) => `
+    .map((l) => {
+      const lineDiscount = Number(l.discount_value ?? 0);
+      return `
       <tr>
         <td>${escapeHtml(l.product_name)}${l.schedule_category !== "OTC" ? ` <b>[${l.schedule_category}]</b>` : ""}<br>
-          <span class="meta">Batch ${escapeHtml(l.batch_no)} · Exp ${formatMonthYear(l.expiry_date)} · HSN ${escapeHtml(l.hsn_code ?? "")}${l.bin_code ? ` · Rack ${escapeHtml(l.bin_code)}` : ""}</span></td>
+          <span class="meta">Batch ${escapeHtml(l.batch_no)} · Exp ${formatMonthYear(l.expiry_date)} · HSN ${escapeHtml(l.hsn_code ?? "")}${l.bin_code ? ` · Rack ${escapeHtml(l.bin_code)}` : ""}</span>${lineDiscount > 0 ? `<br><span class="meta">Disc -₹${lineDiscount.toFixed(2)}</span>` : ""}</td>
         <td class="num">${l.quantity_base_units}</td>
         <td class="num">₹${Number(l.mrp / l.pack_size).toFixed(2)}</td>
         <td class="num">₹${Number(l.taxable_value).toFixed(2)}</td>
-      </tr>`
-    )
+      </tr>`;
+    })
     .join("");
+
+  // Discount can come from either a per-line discount (POS's %/₹/target-price
+  // modes on an item) or the bill-level discount field — a bill printed with
+  // only the latter checked would silently omit a real per-item discount, so
+  // the summary line always reflects whichever combination was actually given.
+  const lineDiscountTotal = sale.lines.reduce((a: number, l: any) => a + Number(l.discount_value ?? 0), 0);
+  const totalDiscount = lineDiscountTotal + Number(s.bill_discount_value ?? 0);
 
   const tenderRows = sale.tenders.map((t: any) => `<div class="row"><span>${t.tender_type.toUpperCase()}</span><span>₹${Number(t.amount).toFixed(2)}</span></div>`).join("");
 
@@ -66,7 +74,7 @@ export function buildReceiptHtml(sale: {
 
   <div class="row"><span>Taxable</span><span>₹${Number(s.taxable_value).toFixed(2)}</span></div>
   <div class="row"><span>Tax (CGST+SGST)</span><span>₹${Number(s.tax_total).toFixed(2)}</span></div>
-  ${Number(s.bill_discount_value) > 0 ? `<div class="row"><span>Discount</span><span>-₹${Number(s.bill_discount_value).toFixed(2)}</span></div>` : ""}
+  ${totalDiscount > 0 ? `<div class="row"><span>Discount</span><span>-₹${totalDiscount.toFixed(2)}</span></div>` : ""}
   <div class="row total"><span>TOTAL</span><span>₹${Number(s.grand_total).toFixed(2)}</span></div>
 
   <div style="margin-top:8px">${tenderRows}</div>
