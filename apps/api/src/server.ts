@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import multipart from "@fastify/multipart";
 import { config } from "./config.js";
 import { pingDatabase } from "./db.js";
 import authPlugin from "./plugins/auth.js";
@@ -18,6 +19,10 @@ import dayCloseRoutes from "./routes/day-close.js";
 import reportRoutes from "./routes/reports.js";
 import requestRoutes from "./routes/requests.js";
 import purchaseOrderRoutes from "./routes/purchase-orders.js";
+import cycleCountRoutes from "./routes/cycle-counts.js";
+import expiryAuditRoutes from "./routes/expiry-audit.js";
+import writeOffRoutes from "./routes/write-offs.js";
+import statutoryReportRoutes from "./routes/statutory-reports.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -30,6 +35,7 @@ export function buildServer(): FastifyInstance {
     },
   });
 
+  app.register(multipart, { limits: { fileSize: config.maxUploadBytes } });
   app.register(authPlugin);
   app.register(authRoutes);
   app.register(productRoutes);
@@ -47,6 +53,10 @@ export function buildServer(): FastifyInstance {
   app.register(reportRoutes);
   app.register(requestRoutes);
   app.register(purchaseOrderRoutes);
+  app.register(cycleCountRoutes);
+  app.register(expiryAuditRoutes);
+  app.register(writeOffRoutes);
+  app.register(statutoryReportRoutes);
 
   app.get("/health", async (_req, reply) => {
     const dbOk = await pingDatabase().catch(() => false);

@@ -129,6 +129,21 @@ export interface CreateProductInput {
   createdBy: string;
 }
 
+// Section 9's write-off form (and anything else needing "which batch, in
+// which bin, right now") — same underlying `stock` view as everywhere
+// else, just per-bin instead of summed across the whole product.
+export async function getStockLocations(productId: string) {
+  const { rows } = await requirePool().query(
+    `SELECT ba.id AS batch_id, ba.batch_no, ba.expiry_date, ba.blocked, ba.mrp, p.pack_size, p.base_unit,
+       b.id AS bin_id, b.code AS bin_code, s.quantity_base_units
+     FROM stock s JOIN batches ba ON ba.id = s.batch_id JOIN bins b ON b.id = s.bin_id JOIN products p ON p.id = s.product_id
+     WHERE s.product_id = $1 AND s.quantity_base_units > 0
+     ORDER BY ba.expiry_date`,
+    [productId]
+  );
+  return rows;
+}
+
 export interface DuplicateMatch {
   id: string;
   name: string;

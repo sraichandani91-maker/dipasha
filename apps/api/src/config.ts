@@ -13,4 +13,11 @@ export const config = {
   jwtRefreshTtlSeconds: Number(process.env.JWT_REFRESH_TTL_SECONDS ?? 30 * 24 * 60 * 60),
   otpTtlSeconds: Number(process.env.OTP_TTL_SECONDS ?? 5 * 60),
   otpMaxAttempts: Number(process.env.OTP_MAX_ATTEMPTS ?? 5),
+
+  // Local disk (Section 9's write-off photo evidence). No object storage
+  // (S3/GCS) is configured for this pilot's single-VPS deployment — see
+  // DECISIONS.md. Move this to real object storage before running more
+  // than one API instance, since local disk won't survive a redeploy.
+  uploadDir: process.env.UPLOAD_DIR ?? "./uploads",
+  maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES ?? 8 * 1024 * 1024),
 };

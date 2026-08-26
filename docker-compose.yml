@@ -30,6 +30,11 @@ services:
       - .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-dipasha}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dipasha}
+    volumes:
+      # Write-off photo evidence (Section 9) — local disk for this single-
+      # VPS pilot, not object storage (see DECISIONS.md). Named volume so
+      # photos survive a container recreate/redeploy.
+      - uploads:/repo/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,5 +75,6 @@ services:
 
 volumes:
   pgdata:
+  uploads:
   caddy_data:
   caddy_config:

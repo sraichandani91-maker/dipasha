@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { createProduct, findProductsBySubstituteGroup, listProducts, updateProduct } from "../repo/products.js";
+import { createProduct, findProductsBySubstituteGroup, getStockLocations, listProducts, updateProduct } from "../repo/products.js";
 import { findOrCreateSalt } from "../repo/salts.js";
 import { substituteGroupKey } from "../domain/substitute-group.js";
 import { generateInternalBarcode } from "../domain/barcode.js";
@@ -66,6 +66,16 @@ export default async function productRoutes(app: FastifyInstance) {
         }),
       }))
     );
+  });
+
+  // Section 9's write-off form (and anything else that needs "which
+  // batch, in which bin, right now") needs more than the aggregated
+  // batches array above — this is the same underlying `stock` view,
+  // just per-bin instead of summed across the product.
+  app.get("/products/:id/stock-locations", { preHandler: app.authenticate }, async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+    reply.send(await getStockLocations(params.data.id));
   });
 
   // Product master create/edit (Section 10.2). Owner and Store Manager
