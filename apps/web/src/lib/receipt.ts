@@ -56,7 +56,8 @@ export function buildReceiptHtml(sale: {
   <p class="center meta">Prayagraj, Uttar Pradesh<br>
     GSTIN: [pending] · Drug Lic. 20B: [pending] · 21B: [pending]</p>
   <p class="meta">Bill: <b>${escapeHtml(s.bill_number)}</b> &nbsp; Date: ${new Date(s.created_at).toLocaleString("en-IN")}</p>
-  ${s.customer_name ? `<p class="meta">Customer: ${escapeHtml(s.customer_name)}${s.customer_phone ? ` (${escapeHtml(s.customer_phone)})` : ""}</p>` : ""}
+  ${s.customer_name ? `<p class="meta">Customer: ${escapeHtml(s.customer_name)}</p>` : ""}
+  ${s.customer_phone ? `<p class="meta">Mobile: ${escapeHtml(s.customer_phone)}</p>` : ""}
 
   <table>
     <thead><tr><td>Item</td><td class="num">Qty</td><td class="num">Rate</td><td class="num">Amt</td></tr></thead>
