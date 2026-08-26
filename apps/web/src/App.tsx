@@ -20,11 +20,12 @@ import MarginReportsPage from "./pages/MarginReportsPage.js";
 import CustomersPage from "./pages/CustomersPage.js";
 import VendorComparisonPage from "./pages/VendorComparisonPage.js";
 import NotificationsPage from "./pages/NotificationsPage.js";
+import ScanInvoicePage from "./pages/ScanInvoicePage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
   | "cycle-counts" | "expiry-audit" | "write-offs" | "reports"
-  | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications";
+  | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -54,6 +55,9 @@ export default function App() {
           <button className={tab === "bins" ? "active" : ""} onClick={() => setTab("bins")}>Bins</button>
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "purchases" ? "active" : ""} onClick={() => setTab("purchases")}>Purchase entry</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "scan-invoice" ? "active" : ""} onClick={() => setTab("scan-invoice")}>Scan invoice</button>
           )}
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "stock-received" ? "active" : ""} onClick={() => setTab("stock-received")}>Stock received</button>
@@ -127,6 +131,7 @@ export default function App() {
             {tab === "customers" && <CustomersPage />}
             {tab === "vendor-comparison" && <VendorComparisonPage />}
             {tab === "notifications" && <NotificationsPage />}
+            {tab === "scan-invoice" && <ScanInvoicePage />}
           </>
         )}
       </div>
