@@ -32,6 +32,13 @@ export interface CreateSaleInput {
   billDiscountValue: number;
   roundOff: number;
   tenders: Array<{ tenderType: "cash" | "upi" | "card" | "credit"; amount: number; referenceNumber: string | null }>;
+  // Section 6A.8 / Section 8: a delivery order's invoice is generated at
+  // pack time, but a COD delivery is paid on handover, not at pack time —
+  // there is genuinely nothing tendered yet. When true, `tenders` is
+  // ignored and one `cod_pending` tender is recorded for the full grand
+  // total instead, so this never has to pretend cash was already
+  // collected. Never set by POS (counter sales always tender for real).
+  codPending?: boolean;
   prescriberDetails: {
     prescriberId: string | null;
     prescriberName: string | null;
@@ -194,8 +201,12 @@ export async function createSale(input: CreateSaleInput) {
     const taxTotal = subLines.reduce((a, s) => a + s.cgstAmount + s.sgstAmount, 0);
     const grandTotal = round2(taxableValueTotal + taxTotal - input.billDiscountValue + input.roundOff);
 
-    const tenderTotal = input.tenders.reduce((a, t) => a + t.amount, 0);
-    if (tenderTotal < grandTotal - 0.5) {
+    const effectiveTenders = input.codPending
+      ? [{ tenderType: "cod_pending" as const, amount: grandTotal, referenceNumber: null }]
+      : input.tenders;
+
+    const tenderTotal = effectiveTenders.reduce((a, t) => a + t.amount, 0);
+    if (!input.codPending && tenderTotal < grandTotal - 0.5) {
       throw new ValidationError("insufficient_tender", { grandTotal, tendered: tenderTotal });
     }
 
@@ -203,7 +214,7 @@ export async function createSale(input: CreateSaleInput) {
     // "billed to account" with no account identified is a contradiction,
     // not a valid state, so this is a real correctness check rather than
     // an invented business rule.
-    const creditTenderTotal = input.tenders.filter((t) => t.tenderType === "credit").reduce((a, t) => a + t.amount, 0);
+    const creditTenderTotal = effectiveTenders.filter((t) => t.tenderType === "credit").reduce((a, t) => a + t.amount, 0);
     if (creditTenderTotal > 0 && !input.customerPhone) {
       throw new ValidationError("credit_requires_customer");
     }
@@ -218,7 +229,7 @@ export async function createSale(input: CreateSaleInput) {
       throw new ValidationError("credit_tender_exceeds_total", { grandTotal, tendered: tenderTotal });
     }
 
-    const cashTender = input.tenders.find((t) => t.tenderType === "cash");
+    const cashTender = effectiveTenders.find((t) => t.tenderType === "cash");
     const changeDue = cashTender ? round2(tenderTotal - grandTotal) : 0;
 
     let customer = null;
@@ -268,7 +279,7 @@ export async function createSale(input: CreateSaleInput) {
       );
     }
 
-    for (const t of input.tenders) {
+    for (const t of effectiveTenders) {
       await client.query(
         `INSERT INTO sale_tenders (sale_id, tender_type, amount, reference_number) VALUES ($1,$2,$3,$4)`,
         [sale.id, t.tenderType, t.amount, t.referenceNumber]

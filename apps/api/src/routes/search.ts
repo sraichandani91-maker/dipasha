@@ -9,7 +9,7 @@ const querySchema = z.object({
   // per Section 5B.3. The side effects for each context (add to bill, log
   // a request, add a PO line) belong to their own milestones (M4/M6B/M3);
   // for now this just records intent in the search log.
-  context: z.enum(["pos", "app_lookup", "request_book", "purchase_entry"]).optional(),
+  context: z.enum(["pos", "app_lookup", "request_book", "purchase_entry", "delivery_order"]).optional(),
 });
 
 /**
