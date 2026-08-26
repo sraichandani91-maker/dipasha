@@ -12,6 +12,13 @@ interface SuggestedLine {
   suggestedVendorId: string | null;
   suggestedVendorName: string | null;
   lastRate: number | null;
+  moqRoundedUp: boolean;
+}
+interface ClearanceCandidate {
+  productId: string;
+  productName: string;
+  nearExpiryStock: number;
+  totalSellableStock: number;
 }
 interface Vendor {
   id: string;
@@ -44,6 +51,7 @@ function ReasonBadges({ line }: { line: SuggestedLine }) {
  */
 export default function PurchaseOrdersPage() {
   const [suggestions, setSuggestions] = useState<SuggestedLine[]>([]);
+  const [clearanceCandidates, setClearanceCandidates] = useState<ClearanceCandidate[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [vendorId, setVendorId] = useState("");
   const [selected, setSelected] = useState<Record<string, SelectedLine>>({});
@@ -53,11 +61,13 @@ export default function PurchaseOrdersPage() {
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
-    const [s, v] = await Promise.all([api.get("/purchase-orders/suggestions"), api.get("/vendors")]);
+    const [suggestionsRes, v] = await Promise.all([api.get("/purchase-orders/suggestions"), api.get("/vendors")]);
+    const s: SuggestedLine[] = suggestionsRes.lines;
     setSuggestions(s);
+    setClearanceCandidates(suggestionsRes.clearanceCandidates ?? []);
     setVendors(v);
     const initial: Record<string, SelectedLine> = {};
-    for (const line of s as SuggestedLine[]) {
+    for (const line of s) {
       initial[line.productId] = {
         productId: line.productId, productName: line.productName, quantityBaseUnits: line.suggestedQty,
         sourceReasons: line.sourceReasons, requestIds: line.requestIds,
@@ -123,6 +133,25 @@ export default function PurchaseOrdersPage() {
         </div>
       )}
 
+      {clearanceCandidates.length > 0 && (
+        <div className="card" style={{ marginBottom: 12, background: "color-mix(in srgb, var(--status-warn) 8%, white)" }}>
+          <strong>Not reordered — remaining stock is near-expiry</strong>
+          <p className="hint-text" style={{ marginTop: 4 }}>
+            These would otherwise show as low-stock, but every unit left is close to expiry. Reordering would only add
+            more stock behind stock that needs to move first — clear it instead (Expiry audit / discounting), then let
+            it resurface here once healthy stock is actually low.
+          </p>
+          <table className="data-table" style={{ marginTop: 8 }}>
+            <thead><tr><th>Item</th><th>Near-expiry units</th><th>Total sellable</th></tr></thead>
+            <tbody>
+              {clearanceCandidates.map((c) => (
+                <tr key={c.productId}><td>{c.productName}</td><td>{c.nearExpiryStock}</td><td>{c.totalSellableStock}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="field">
           <label>Vendor for this PO</label>
@@ -153,6 +182,7 @@ export default function PurchaseOrdersPage() {
                     value={selected[line.productId]?.quantityBaseUnits ?? line.suggestedQty}
                     onChange={(e) => setQty(line.productId, Number(e.target.value))}
                   />
+                  {line.moqRoundedUp && <div className="hint-text" title="Rounded up to the vendor's minimum order pack">Rounded to MOQ</div>}
                 </td>
               </tr>
             ))}

@@ -15,10 +15,15 @@ import CycleCountPage from "./pages/CycleCountPage.js";
 import ExpiryAuditPage from "./pages/ExpiryAuditPage.js";
 import WriteOffsPage from "./pages/WriteOffsPage.js";
 import ReportsPage from "./pages/ReportsPage.js";
+import PrescribersPage from "./pages/PrescribersPage.js";
+import MarginReportsPage from "./pages/MarginReportsPage.js";
+import CustomersPage from "./pages/CustomersPage.js";
+import VendorComparisonPage from "./pages/VendorComparisonPage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
-  | "cycle-counts" | "expiry-audit" | "write-offs" | "reports";
+  | "cycle-counts" | "expiry-audit" | "write-offs" | "reports"
+  | "prescribers" | "margins" | "customers" | "vendor-comparison";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -67,6 +72,18 @@ export default function App() {
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "reports" ? "active" : ""} onClick={() => setTab("reports")}>Reports</button>
           )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "prescribers" ? "active" : ""} onClick={() => setTab("prescribers")}>Prescribers</button>
+          )}
+          {user.role === "owner" && (
+            <button className={tab === "margins" ? "active" : ""} onClick={() => setTab("margins")}>Margins</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "customers" ? "active" : ""} onClick={() => setTab("customers")}>Customers</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "vendor-comparison" ? "active" : ""} onClick={() => setTab("vendor-comparison")}>Vendor comparison</button>
+          )}
         </nav>
         <div className="spacer" />
         {user.impersonating && <span className="impersonating">IMPERSONATING {user.role.toUpperCase()}</span>}
@@ -101,6 +118,10 @@ export default function App() {
             {tab === "expiry-audit" && <ExpiryAuditPage />}
             {tab === "write-offs" && <WriteOffsPage />}
             {tab === "reports" && <ReportsPage />}
+            {tab === "prescribers" && <PrescribersPage />}
+            {tab === "margins" && <MarginReportsPage />}
+            {tab === "customers" && <CustomersPage />}
+            {tab === "vendor-comparison" && <VendorComparisonPage />}
           </>
         )}
       </div>

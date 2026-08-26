@@ -66,10 +66,14 @@ export default function PosPage({
   const [roundOff, setRoundOff] = useState(0);
   const [cashTendered, setCashTendered] = useState<number | "">("");
   const [tenderType, setTenderType] = useState<"cash" | "upi" | "card" | "credit">("cash");
+  const [prescriberId, setPrescriberId] = useState<string | null>(null);
   const [prescriberName, setPrescriberName] = useState("");
   const [prescriberReg, setPrescriberReg] = useState("");
+  const [prescriberSuggestions, setPrescriberSuggestions] = useState<any[]>([]);
   const [patientName, setPatientName] = useState("");
   const [patientContact, setPatientContact] = useState("");
+  const [creditBalance, setCreditBalance] = useState<any>(null);
+  const [creditBalanceLoading, setCreditBalanceLoading] = useState(false);
   const [held, setHeld] = useState<any[]>([]);
   const [showSearch, setShowSearch] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +160,42 @@ export default function PosPage({
     setLines((ls) => ls.filter((l) => l.key !== key));
   }
 
+  async function searchPrescribers(q: string) {
+    setPrescriberName(q);
+    setPrescriberId(null);
+    if (q.trim().length < 2) { setPrescriberSuggestions([]); return; }
+    try {
+      setPrescriberSuggestions(await api.get(`/prescribers?search=${encodeURIComponent(q)}`));
+    } catch {
+      // autocomplete failing shouldn't block manual entry
+    }
+  }
+
+  function selectPrescriber(p: any) {
+    setPrescriberId(p.id);
+    setPrescriberName(p.name);
+    setPrescriberReg(p.registration_number ?? "");
+    setPrescriberSuggestions([]);
+  }
+
+  // Section 9A.4: "running balance shown to the biller before the sale
+  // completes." Looked up by phone since that's all POS captures — a
+  // credit sale for a phone with no matching customer record simply has
+  // no balance to preview (createSale's own findOrCreateCustomer will
+  // create one at completion).
+  async function checkCreditBalance() {
+    if (!customerPhone.trim()) return;
+    setCreditBalanceLoading(true);
+    setCreditBalance(null);
+    try {
+      const matches = await api.get(`/customers/search?q=${encodeURIComponent(customerPhone.trim())}`);
+      const match = matches.find((c: any) => c.phone === customerPhone.trim());
+      if (match) setCreditBalance(await api.get(`/customers/${match.id}/balance`));
+    } finally {
+      setCreditBalanceLoading(false);
+    }
+  }
+
   const previews = lines.map((l) => ({ ...l, ...computeLinePreview(l) }));
   const taxableTotal = previews.reduce((a, p) => a + p.taxable, 0);
   const taxTotal = previews.reduce((a, p) => {
@@ -186,19 +226,21 @@ export default function PosPage({
         billDiscountValue,
         roundOff,
         tenders,
-        prescriberDetails: needsPrescriberCapture ? { prescriberName, prescriberRegistrationNumber: prescriberReg, patientName, patientContact } : null,
+        prescriberDetails: needsPrescriberCapture ? { prescriberId, prescriberName, prescriberRegistrationNumber: prescriberReg, patientName, patientContact } : null,
         fulfillsRequestId,
         deviceId: "web-console",
       });
       setCompletedBill(res);
       setLines([]);
       setCustomerName(""); setCustomerPhone(""); setBillDiscountValue(0); setRoundOff(0);
-      setCashTendered(""); setPrescriberName(""); setPrescriberReg(""); setPatientName(""); setPatientContact("");
-      setFulfillsRequestId(null); setFulfillNote(null);
+      setCashTendered(""); setPrescriberId(null); setPrescriberName(""); setPrescriberReg(""); setPatientName(""); setPatientContact("");
+      setFulfillsRequestId(null); setFulfillNote(null); setCreditBalance(null);
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.body?.error === "insufficient_stock") setError(`Only ${err.body.details.available} in stock, ${err.body.details.requested} requested.`);
         else if (err.body?.error === "insufficient_tender") setError(`Tendered amount doesn't cover the total (₹${err.body.details.grandTotal}).`);
+        else if (err.body?.error === "credit_requires_customer") setError("Credit sales need a customer phone number.");
+        else if (err.body?.error === "credit_tender_exceeds_total") setError(`Credit tendered (₹${err.body.details.tendered}) is more than the bill total (₹${err.body.details.grandTotal}).`);
         else setError("Could not complete the sale — check the lines and try again.");
       } else setError("Could not complete the sale.");
     } finally {
@@ -333,7 +375,20 @@ export default function PosPage({
           <div className="card" style={{ marginTop: 12, background: "color-mix(in srgb, var(--status-warn) 8%, white)" }}>
             <strong>Schedule H/H1 item(s) — prescriber details (optional, never blocks the sale)</strong>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-              <div className="field"><label>Prescriber name</label><input value={prescriberName} onChange={(e) => setPrescriberName(e.target.value)} /></div>
+              <div className="field" style={{ position: "relative" }}>
+                <label>Prescriber name</label>
+                <input value={prescriberName} onChange={(e) => searchPrescribers(e.target.value)} placeholder="Start typing to search…" />
+                {prescriberId && <span className="badge badge-info" style={{ marginLeft: 6 }}>Matched</span>}
+                {prescriberSuggestions.length > 0 && (
+                  <div className="card" style={{ position: "absolute", zIndex: 5, top: "100%", left: 0, minWidth: 240, padding: 4 }}>
+                    {prescriberSuggestions.map((p) => (
+                      <div key={p.id} style={{ padding: "4px 6px", cursor: "pointer" }} onClick={() => selectPrescriber(p)}>
+                        {p.name} {p.clinic_or_hospital && <span className="hint-text">· {p.clinic_or_hospital}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="field"><label>Registration no.</label><input value={prescriberReg} onChange={(e) => setPrescriberReg(e.target.value)} /></div>
               <div className="field"><label>Patient name</label><input value={patientName} onChange={(e) => setPatientName(e.target.value)} /></div>
               <div className="field"><label>Patient contact</label><input value={patientContact} onChange={(e) => setPatientContact(e.target.value)} /></div>
@@ -371,13 +426,28 @@ export default function PosPage({
           <hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "12px 0" }} />
           <div className="field">
             <label>Tender</label>
-            <select value={tenderType} onChange={(e) => setTenderType(e.target.value as any)} style={{ width: "100%" }}>
+            <select value={tenderType} onChange={(e) => { setTenderType(e.target.value as any); setCreditBalance(null); }} style={{ width: "100%" }}>
               <option value="cash">Cash</option>
               <option value="upi">UPI</option>
               <option value="card">Card</option>
               <option value="credit">Credit (khata)</option>
             </select>
           </div>
+          {tenderType === "credit" && (
+            <div className="field">
+              {!customerPhone && <p className="hint-text" style={{ margin: "4px 0" }}>Credit sales need a customer phone number (above).</p>}
+              <button className="btn-secondary" type="button" disabled={!customerPhone || creditBalanceLoading} onClick={checkCreditBalance}>
+                {creditBalanceLoading ? "Checking…" : "Check credit balance"}
+              </button>
+              {creditBalance && (
+                <p style={{ margin: "6px 0 0" }}>
+                  Outstanding: <strong className={creditBalance.overLimit ? "stock-out" : ""}>₹{creditBalance.balance.toFixed(2)}</strong>
+                  {creditBalance.creditLimit !== null && ` of ₹${creditBalance.creditLimit.toFixed(2)} limit`}
+                  {creditBalance.overLimit && <span className="error-text" style={{ display: "block" }}>Already over limit.</span>}
+                </p>
+              )}
+            </div>
+          )}
           {tenderType === "cash" && (
             <div className="field">
               <label>Amount tendered</label>
