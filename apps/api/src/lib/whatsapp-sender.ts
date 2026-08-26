@@ -1,5 +1,3 @@
-import type { FastifyBaseLogger } from "fastify";
-
 /**
  * Pluggable WhatsApp delivery, same shape as `auth/otp-sender.ts`. No
  * real WhatsApp Business API account exists yet (Section 14 — the
@@ -12,7 +10,16 @@ import type { FastifyBaseLogger } from "fastify";
  * template — WhatsApp doesn't allow free-form business-initiated text
  * outside a customer-service window — so the text this build sends is a
  * placeholder shape, not a final approved template body.
+ *
+ * Logger is a minimal structural type, not Fastify's `FastifyBaseLogger`
+ * directly — the M8 dispatcher (`domain/notifications.ts`) calls this
+ * from a background interval loop with no request in scope, not only
+ * from route handlers with `req.log`.
  */
+export interface MinimalLogger {
+  warn(obj: unknown, msg?: string): void;
+}
+
 export interface WhatsAppMessage {
   phone: string;
   text: string;
@@ -28,7 +35,7 @@ export interface WhatsAppSender {
 }
 
 export class ConsoleWhatsAppSender implements WhatsAppSender {
-  constructor(private readonly log: FastifyBaseLogger) {}
+  constructor(private readonly log: MinimalLogger) {}
 
   async send(message: WhatsAppMessage): Promise<WhatsAppSendResult> {
     this.log.warn(
@@ -39,7 +46,7 @@ export class ConsoleWhatsAppSender implements WhatsAppSender {
   }
 }
 
-export function createWhatsAppSender(provider: string, log: FastifyBaseLogger): WhatsAppSender {
+export function createWhatsAppSender(provider: string, log: MinimalLogger): WhatsAppSender {
   // Only "console" exists today. Add a real branch here (reading its own
   // provider-specific env vars from config.ts) once credentials exist —
   // the call sites (routes/sales.ts) never need to change. An unknown

@@ -2,6 +2,7 @@ import { pool } from "../db.js";
 import { allocateFefo, getSpecificBatchStock, InsufficientStockError } from "../domain/fefo.js";
 import { billSeriesPrefix, reserveNumber } from "../domain/bill-numbering.js";
 import { findOrCreateCustomer } from "./customers.js";
+import { enqueueNotification } from "../domain/notifications.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -233,7 +234,7 @@ export async function createSale(input: CreateSaleInput) {
          (bill_number, channel, customer_id, customer_name, customer_phone, taxable_value, bill_discount_value,
           tax_total, round_off, grand_total, amount_tendered, change_due, source, created_by, device_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-       RETURNING id, bill_number, created_at, customer_phone`,
+       RETURNING id, bill_number, created_at, customer_name, customer_phone`,
       [
         billNumber, input.channel, customer?.id ?? null, customer?.name ?? null, customer?.phone ?? input.customerPhone ?? null,
         round2(taxableValueTotal), input.billDiscountValue, round2(taxTotal), input.roundOff, grandTotal, tenderTotal, changeDue,
@@ -297,6 +298,26 @@ export async function createSale(input: CreateSaleInput) {
         `UPDATE customer_requests SET status = 'fulfilled', fulfilled_sale_id = $1, updated_at = now() WHERE id = $2`,
         [sale.id, input.fulfillsRequestId]
       );
+    }
+
+    // Section 12A.2: "sends immediately on bill save, if the phone number
+    // is present." Enqueues only — this is a plain DB insert inside the
+    // same transaction as the sale, so it's atomic with it and never
+    // makes the bill wait on a network call. The background dispatcher
+    // (domain/notifications.ts, polled from index.ts) does the actual
+    // send after this transaction commits.
+    if (sale.customer_phone) {
+      await enqueueNotification(client, {
+        triggerType: "bill_generated",
+        category: "transactional",
+        templateKey: "whatsapp_template_bill_generated",
+        triggerEnabledSettingKey: "whatsapp_trigger_bill_generated_enabled",
+        recipientCustomerId: customer?.id ?? null,
+        recipientPhone: sale.customer_phone,
+        referenceType: "sale",
+        referenceId: sale.id,
+        payload: { billNumber: sale.bill_number, date: sale.created_at, grandTotal, customerName: sale.customer_name },
+      });
     }
 
     await client.query("COMMIT");

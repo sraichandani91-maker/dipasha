@@ -1,6 +1,8 @@
 import { pool } from "../db.js";
 import { getSetting } from "./settings.js";
 import { allocateFefo, InsufficientStockError } from "../domain/fefo.js";
+import { enqueueNotification } from "../domain/notifications.js";
+import { findOrCreateCustomer } from "./customers.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -65,7 +67,12 @@ export class ReservationError extends Error {
 // held is the one that would actually be sold.
 export async function reserveForRequest(requestId: string, actorUserId: string, deviceId: string) {
   const db = requirePool();
-  const { rows: reqRows } = await db.query(`SELECT * FROM customer_requests WHERE id = $1`, [requestId]);
+  const { rows: reqRows } = await db.query(
+    `SELECT cr.*, p.name AS product_name, p.schedule_category
+     FROM customer_requests cr LEFT JOIN products p ON p.id = cr.product_id
+     WHERE cr.id = $1`,
+    [requestId]
+  );
   const request = reqRows[0];
   if (!request) throw new ReservationError("request_not_found");
   if (!request.product_id) throw new ReservationError("no_linked_product");
@@ -80,6 +87,11 @@ export async function reserveForRequest(requestId: string, actorUserId: string, 
   }
 
   const windowHours = await getSetting("stock_reservation_hours", 48);
+  // Section 6B.4/12A.2: "the callback trigger" — same identity model as
+  // billing (findOrCreateCustomer), so a request-book customer and a
+  // billing customer are the same row and share one WhatsApp consent
+  // setting rather than two disconnected ones.
+  const customer = await findOrCreateCustomer(request.customer_name, request.customer_phone);
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -91,6 +103,17 @@ export async function reserveForRequest(requestId: string, actorUserId: string, 
       );
     }
     await client.query(`UPDATE customer_requests SET status = 'customer_notified', updated_at = now() WHERE id = $1`, [requestId]);
+    await enqueueNotification(client, {
+      triggerType: "callback_stock_available",
+      category: "transactional",
+      templateKey: "whatsapp_template_callback_stock_available",
+      triggerEnabledSettingKey: "whatsapp_trigger_callback_enabled",
+      recipientCustomerId: customer.id,
+      recipientPhone: request.customer_phone,
+      referenceType: "customer_request",
+      referenceId: requestId,
+      payload: { productName: request.product_name, scheduleCategory: request.schedule_category, reservedUntilHours: windowHours, customerName: request.customer_name },
+    });
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");

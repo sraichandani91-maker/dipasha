@@ -41,11 +41,25 @@ export async function getRecentPurchases(customerId: string, limit = 10) {
 
 export async function searchCustomers(query: string, limit = 10) {
   const { rows } = await requirePool().query(
-    `SELECT id, name, phone, credit_enabled, credit_limit, account_customer_id FROM customers
+    `SELECT id, name, phone, credit_enabled, credit_limit, account_customer_id,
+       whatsapp_transactional_opt_in, whatsapp_marketing_opt_in
+     FROM customers
      WHERE name ILIKE $1 OR phone ILIKE $1 ORDER BY name LIMIT $2`,
     [`%${query}%`, limit]
   );
   return rows;
+}
+
+// Section 12A.5: "store consent per customer per category." No inbound
+// WhatsApp webhook exists yet to auto-process a customer's own STOP
+// reply (that's M13's shared inbox) — until then this is how staff
+// record a customer's stated preference.
+export async function updateWhatsAppConsent(customerId: string, input: { transactionalOptIn: boolean; marketingOptIn: boolean }) {
+  const { rows } = await requirePool().query(
+    `UPDATE customers SET whatsapp_transactional_opt_in = $1, whatsapp_marketing_opt_in = $2 WHERE id = $3 RETURNING id`,
+    [input.transactionalOptIn, input.marketingOptIn, customerId]
+  );
+  if (!rows[0]) throw new CustomerError("customer_not_found");
 }
 
 export class CustomerError extends Error {

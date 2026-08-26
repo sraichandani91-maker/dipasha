@@ -27,6 +27,7 @@ import prescriberRoutes from "./routes/prescribers.js";
 import marginReportRoutes from "./routes/margin-reports.js";
 import customerRoutes from "./routes/customers.js";
 import vendorComparisonRoutes from "./routes/vendor-comparison.js";
+import notificationRoutes from "./routes/notifications.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -65,6 +66,7 @@ export function buildServer(): FastifyInstance {
   app.register(marginReportRoutes);
   app.register(customerRoutes);
   app.register(vendorComparisonRoutes);
+  app.register(notificationRoutes);
 
   app.get("/health", async (_req, reply) => {
     const dbOk = await pingDatabase().catch(() => false);

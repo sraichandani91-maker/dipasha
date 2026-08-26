@@ -4,9 +4,7 @@ import { pool } from "../db.js";
 import { createSale, ValidationError } from "../repo/sales.js";
 import { createHeldBill, deleteHeldBill, listHeldBills } from "../repo/held-bills.js";
 import { allocateFefo, InsufficientStockError } from "../domain/fefo.js";
-import { config } from "../config.js";
-import { createWhatsAppSender } from "../lib/whatsapp-sender.js";
-import { buildBillWhatsAppText } from "../lib/whatsapp-message.js";
+import { enqueueAndSendNow } from "../domain/notifications.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -190,10 +188,14 @@ export default async function salesRoutes(app: FastifyInstance) {
     reply.send({ printCount: rows[0].print_count, isDuplicate: rows[0].print_count > 1 });
   });
 
-  // Send bill via WhatsApp (Section 6A.6 / Section 14). Sending again is
-  // always allowed (same posture as reprint) but counted, not silently
-  // repeated without a trace — `whatsapp_send_count`/`whatsapp_last_sent_at`
-  // mirror `print_count`.
+  // Manual "Send via WhatsApp" (Section 6A.6 / 12A.2). The automatic
+  // bill-generation trigger already enqueues one notification the moment
+  // the sale is saved (see createSale) — this route is for the explicit
+  // staff resend: "always surface a manual ... action" (Section 12A.1).
+  // Goes through the same dispatcher as every other WhatsApp send
+  // (Section 12A: "every message goes through one dispatcher"), so this
+  // resend shows up in the same `notification_log` as the automatic one,
+  // not a separate counter.
   app.post(
     "/sales/:id/send-whatsapp",
     { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
@@ -203,21 +205,33 @@ export default async function salesRoutes(app: FastifyInstance) {
 
       const db = requirePool();
       const { rows } = await db.query(
-        `SELECT bill_number, created_at, grand_total, customer_name, customer_phone FROM sales WHERE id = $1`,
+        `SELECT id, bill_number, created_at, grand_total, customer_id, customer_name, customer_phone FROM sales WHERE id = $1`,
         [params.data.id]
       );
       if (rows.length === 0) return reply.code(404).send({ error: "not_found" });
       const sale = rows[0];
       if (!sale.customer_phone) return reply.code(409).send({ error: "no_customer_phone" });
 
-      const sender = createWhatsAppSender(config.whatsappProvider, req.log);
-      const result = await sender.send({ phone: sale.customer_phone, text: buildBillWhatsAppText(sale) });
-
-      const { rows: updated } = await db.query(
-        `UPDATE sales SET whatsapp_send_count = whatsapp_send_count + 1, whatsapp_last_sent_at = now() WHERE id = $1 RETURNING whatsapp_send_count`,
-        [params.data.id]
+      const result = await enqueueAndSendNow(
+        {
+          triggerType: "bill_generated",
+          category: "transactional",
+          templateKey: "whatsapp_template_bill_generated",
+          triggerEnabledSettingKey: "whatsapp_trigger_bill_generated_enabled",
+          recipientCustomerId: sale.customer_id,
+          recipientPhone: sale.customer_phone,
+          referenceType: "sale",
+          referenceId: sale.id,
+          payload: { billNumber: sale.bill_number, date: sale.created_at, grandTotal: Number(sale.grand_total), customerName: sale.customer_name },
+        },
+        req.log
       );
-      reply.send({ status: result.status, sendCount: updated[0].whatsapp_send_count, isResend: updated[0].whatsapp_send_count > 1 });
+
+      const { rows: countRows } = await db.query(
+        `SELECT COUNT(*)::int AS n FROM notification_log WHERE reference_type = 'sale' AND reference_id = $1 AND status IN ('sent', 'logged_dev_mode')`,
+        [sale.id]
+      );
+      reply.send({ status: result.status, sendCount: countRows[0].n, isResend: countRows[0].n > 1 });
     }
   );
 

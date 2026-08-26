@@ -8,6 +8,7 @@ import {
   recordPayment,
   searchCustomers,
   updateCreditSettings,
+  updateWhatsAppConsent,
 } from "../repo/customers.js";
 
 /**
@@ -39,6 +40,23 @@ export default async function customerRoutes(app: FastifyInstance) {
       reply.send({ updated: true });
     } catch (err) {
       if (err instanceof CustomerError) return reply.code(409).send({ error: err.code });
+      throw err;
+    }
+  });
+
+  // Section 12A.5: opt-out handling. Marketing defaults to opted-out
+  // (explicit consent required); transactional defaults to opted-in but
+  // can be turned off if a customer explicitly asks not to be messaged.
+  const whatsappConsentSchema = z.object({ transactionalOptIn: z.boolean(), marketingOptIn: z.boolean() });
+  app.patch("/customers/:id/whatsapp-consent", guard, async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    const body = whatsappConsentSchema.safeParse(req.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
+    try {
+      await updateWhatsAppConsent(params.data.id, body.data);
+      reply.send({ updated: true });
+    } catch (err) {
+      if (err instanceof CustomerError) return reply.code(404).send({ error: err.code });
       throw err;
     }
   });
