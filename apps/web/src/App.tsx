@@ -6,8 +6,9 @@ import BinsPage from "./pages/BinsPage.js";
 import PurchaseEntryPage from "./pages/PurchaseEntryPage.js";
 import StockReceivedPage from "./pages/StockReceivedPage.js";
 import PutAwayPage from "./pages/PutAwayPage.js";
+import PosPage from "./pages/PosPage.js";
 
-type Tab = "products" | "bins" | "purchases" | "stock-received" | "putaway";
+type Tab = "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -23,6 +24,9 @@ export default function App() {
       <div className="topbar">
         <span className="brand">Dipasha Console</span>
         <nav>
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "pos" ? "active" : ""} onClick={() => setTab("pos")}>Billing (POS)</button>
+          )}
           <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}>Products</button>
           <button className={tab === "bins" ? "active" : ""} onClick={() => setTab("bins")}>Bins</button>
           {(user.role === "owner" || user.role === "store_manager") && (
@@ -49,6 +53,7 @@ export default function App() {
         <button className="btn-secondary" onClick={logout} style={{ marginLeft: 8 }}>Sign out</button>
       </div>
       <div className="content">
+        {tab === "pos" && <PosPage />}
         {tab === "products" && <ProductsPage />}
         {tab === "bins" && <BinsPage />}
         {tab === "purchases" && <PurchaseEntryPage />}
