@@ -21,11 +21,14 @@ import CustomersPage from "./pages/CustomersPage.js";
 import VendorComparisonPage from "./pages/VendorComparisonPage.js";
 import NotificationsPage from "./pages/NotificationsPage.js";
 import ScanInvoicePage from "./pages/ScanInvoicePage.js";
+import DeliveryOrdersPage from "./pages/DeliveryOrdersPage.js";
+import PickPackPage from "./pages/PickPackPage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
   | "cycle-counts" | "expiry-audit" | "write-offs" | "reports"
-  | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice";
+  | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
+  | "delivery-orders" | "pick-pack";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -92,6 +95,12 @@ export default function App() {
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "notifications" ? "active" : ""} onClick={() => setTab("notifications")}>Notifications</button>
           )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "delivery-orders" ? "active" : ""} onClick={() => setTab("delivery-orders")}>Delivery orders</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager" || user.role === "picker_packer") && (
+            <button className={tab === "pick-pack" ? "active" : ""} onClick={() => setTab("pick-pack")}>Pick &amp; pack</button>
+          )}
         </nav>
         <div className="spacer" />
         {user.impersonating && <span className="impersonating">IMPERSONATING {user.role.toUpperCase()}</span>}
@@ -132,6 +141,8 @@ export default function App() {
             {tab === "vendor-comparison" && <VendorComparisonPage />}
             {tab === "notifications" && <NotificationsPage />}
             {tab === "scan-invoice" && <ScanInvoicePage />}
+            {tab === "delivery-orders" && <DeliveryOrdersPage />}
+            {tab === "pick-pack" && <PickPackPage />}
           </>
         )}
       </div>

@@ -57,7 +57,7 @@ export default function SearchBar({
   onRequestBook,
   autoFocus,
 }: {
-  context?: "pos" | "app_lookup" | "request_book" | "purchase_entry";
+  context?: "pos" | "app_lookup" | "request_book" | "purchase_entry" | "delivery_order";
   onSelect?: (product: SearchProduct) => void;
   onRequestBook?: (product: SearchProduct) => void;
   autoFocus?: boolean;
