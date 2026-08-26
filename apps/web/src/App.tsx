@@ -9,6 +9,8 @@ import PutAwayPage from "./pages/PutAwayPage.js";
 import PosPage, { type FulfillRequest } from "./pages/PosPage.js";
 import RequestBookPage from "./pages/RequestBookPage.js";
 import PurchaseOrdersPage from "./pages/PurchaseOrdersPage.js";
+import DailyReviewScreen from "./pages/DailyReviewScreen.js";
+import DailyReviewAlarm from "./components/DailyReviewAlarm.js";
 
 type Tab = "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders";
 
@@ -18,6 +20,7 @@ export default function App() {
   const { user, loading, logout, impersonate } = useAuth();
   const [tab, setTab] = useState<Tab>("products");
   const [fulfillRequest, setFulfillRequest] = useState<FulfillRequest | null>(null);
+  const [reviewMode, setReviewMode] = useState(false);
 
   function fulfillAtPos(req: FulfillRequest) {
     setFulfillRequest(req);
@@ -64,15 +67,22 @@ export default function App() {
         <span className="who">{user.name}<br />{user.role}</span>
         <button className="btn-secondary" onClick={logout} style={{ marginLeft: 8 }}>Sign out</button>
       </div>
+      <DailyReviewAlarm onReviewNow={() => setReviewMode(true)} />
       <div className="content">
-        {tab === "pos" && <PosPage fulfillRequest={fulfillRequest} onConsumeFulfillRequest={() => setFulfillRequest(null)} />}
-        {tab === "products" && <ProductsPage />}
-        {tab === "bins" && <BinsPage />}
-        {tab === "purchases" && <PurchaseEntryPage />}
-        {tab === "stock-received" && <StockReceivedPage />}
-        {tab === "putaway" && <PutAwayPage />}
-        {tab === "requests" && <RequestBookPage onFulfillAtPos={fulfillAtPos} />}
-        {tab === "purchase-orders" && <PurchaseOrdersPage />}
+        {reviewMode ? (
+          <DailyReviewScreen onDone={() => setReviewMode(false)} />
+        ) : (
+          <>
+            {tab === "pos" && <PosPage fulfillRequest={fulfillRequest} onConsumeFulfillRequest={() => setFulfillRequest(null)} />}
+            {tab === "products" && <ProductsPage />}
+            {tab === "bins" && <BinsPage />}
+            {tab === "purchases" && <PurchaseEntryPage />}
+            {tab === "stock-received" && <StockReceivedPage />}
+            {tab === "putaway" && <PutAwayPage />}
+            {tab === "requests" && <RequestBookPage onFulfillAtPos={fulfillAtPos} />}
+            {tab === "purchase-orders" && <PurchaseOrdersPage />}
+          </>
+        )}
       </div>
     </div>
   );

@@ -4,7 +4,7 @@ import { useAuth } from "../auth/AuthContext.js";
 import RequestFormModal from "../components/RequestFormModal.js";
 import SearchBar from "../components/SearchBar.js";
 
-interface RequestRow {
+export interface RequestRow {
   id: string;
   customer_name: string;
   customer_phone: string;
@@ -39,7 +39,7 @@ function UrgencyBadge({ urgency }: { urgency: string }) {
   return <span className={`badge ${cls}`}>{urgency.replace("_", " ")}</span>;
 }
 
-function itemLabel(r: RequestRow): string {
+export function itemLabel(r: RequestRow): string {
   return r.product_name ?? r.pending_product_name ?? r.free_text_item ?? "(unknown item)";
 }
 
