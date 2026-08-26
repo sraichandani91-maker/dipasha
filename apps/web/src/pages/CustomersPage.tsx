@@ -8,6 +8,8 @@ interface CustomerRow {
   credit_enabled: boolean;
   credit_limit: number | null;
   account_customer_id: string | null;
+  whatsapp_transactional_opt_in: boolean;
+  whatsapp_marketing_opt_in: boolean;
 }
 
 function defaultRange() {
@@ -84,6 +86,23 @@ function CustomerDetail({ customer, onUpdated }: { customer: CustomerRow; onUpda
 
   const [range, setRange] = useState(defaultRange());
   const [statement, setStatement] = useState<any>(null);
+
+  const [transactionalOptIn, setTransactionalOptIn] = useState(customer.whatsapp_transactional_opt_in);
+  const [marketingOptIn, setMarketingOptIn] = useState(customer.whatsapp_marketing_opt_in);
+  const [savingConsent, setSavingConsent] = useState(false);
+  const [consentSaved, setConsentSaved] = useState(false);
+
+  async function saveConsent() {
+    setSavingConsent(true);
+    setConsentSaved(false);
+    try {
+      await api.patch(`/customers/${customer.id}/whatsapp-consent`, { transactionalOptIn, marketingOptIn });
+      onUpdated({ ...customer, whatsapp_transactional_opt_in: transactionalOptIn, whatsapp_marketing_opt_in: marketingOptIn });
+      setConsentSaved(true);
+    } finally {
+      setSavingConsent(false);
+    }
+  }
 
   async function loadBalance() {
     setLoadingBalance(true);
@@ -167,6 +186,17 @@ function CustomerDetail({ customer, onUpdated }: { customer: CustomerRow; onUpda
               {balance.accountHolderId !== customer.id && <p className="hint-text">Billed under family account: {balance.accountHolderName}</p>}
             </div>
           )}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <strong>WhatsApp consent</strong>
+          <p className="hint-text" style={{ margin: "4px 0" }}>No inbound WhatsApp reply handling exists yet — set these from what the customer has told staff directly.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+            <label><input type="checkbox" checked={transactionalOptIn} onChange={(e) => setTransactionalOptIn(e.target.checked)} /> Transactional (bill notifications, stock callbacks)</label>
+            <label><input type="checkbox" checked={marketingOptIn} onChange={(e) => setMarketingOptIn(e.target.checked)} /> Marketing (promotions — requires explicit consent)</label>
+          </div>
+          <button className="btn-primary" disabled={savingConsent} onClick={saveConsent} style={{ marginTop: 6 }}>{savingConsent ? "Saving…" : "Save consent"}</button>
+          {consentSaved && <p className="hint-text" style={{ marginTop: 4 }}>Saved.</p>}
         </div>
 
         <div style={{ flex: 1, minWidth: 260 }}>

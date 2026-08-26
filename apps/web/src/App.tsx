@@ -19,11 +19,12 @@ import PrescribersPage from "./pages/PrescribersPage.js";
 import MarginReportsPage from "./pages/MarginReportsPage.js";
 import CustomersPage from "./pages/CustomersPage.js";
 import VendorComparisonPage from "./pages/VendorComparisonPage.js";
+import NotificationsPage from "./pages/NotificationsPage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
   | "cycle-counts" | "expiry-audit" | "write-offs" | "reports"
-  | "prescribers" | "margins" | "customers" | "vendor-comparison";
+  | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -84,6 +85,9 @@ export default function App() {
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "vendor-comparison" ? "active" : ""} onClick={() => setTab("vendor-comparison")}>Vendor comparison</button>
           )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "notifications" ? "active" : ""} onClick={() => setTab("notifications")}>Notifications</button>
+          )}
         </nav>
         <div className="spacer" />
         {user.impersonating && <span className="impersonating">IMPERSONATING {user.role.toUpperCase()}</span>}
@@ -122,6 +126,7 @@ export default function App() {
             {tab === "margins" && <MarginReportsPage />}
             {tab === "customers" && <CustomersPage />}
             {tab === "vendor-comparison" && <VendorComparisonPage />}
+            {tab === "notifications" && <NotificationsPage />}
           </>
         )}
       </div>
