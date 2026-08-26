@@ -8,6 +8,7 @@ import { api, ApiError } from "../api.js";
  * 6A.8: completing packing generates the delivery invoice.
  */
 export default function PickPackPage() {
+  const [tab, setTab] = useState<"pickpack" | "returns">("pickpack");
   const [orders, setOrders] = useState<any[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -22,22 +23,31 @@ export default function PickPackPage() {
   return (
     <div>
       <h2 style={{ marginTop: 0 }}>Pick &amp; pack</h2>
-      <button className="btn-secondary" onClick={load} style={{ marginBottom: 8 }}>Refresh</button>
-      <div className="card">
-        <table className="data-table">
-          <thead><tr><th>Order</th><th>Customer</th><th>Status</th></tr></thead>
-          <tbody>
-            {orders?.map((o) => (
-              <tr key={o.id} style={{ cursor: "pointer" }} onClick={() => setSelectedId(o.id)}>
-                <td>{o.order_number}</td>
-                <td>{o.customer_name}</td>
-                <td>{o.status}</td>
-              </tr>
-            ))}
-            {orders && orders.length === 0 && <tr><td colSpan={3} className="hint-text">Nothing waiting to be picked or packed.</td></tr>}
-          </tbody>
-        </table>
+      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+        <button className={tab === "pickpack" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("pickpack")}>Pick &amp; pack</button>
+        <button className={tab === "returns" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("returns")}>Returns to store</button>
       </div>
+      {tab === "pickpack" && (
+        <>
+          <button className="btn-secondary" onClick={load} style={{ marginBottom: 8 }}>Refresh</button>
+          <div className="card">
+            <table className="data-table">
+              <thead><tr><th>Order</th><th>Customer</th><th>Status</th></tr></thead>
+              <tbody>
+                {orders?.map((o) => (
+                  <tr key={o.id} style={{ cursor: "pointer" }} onClick={() => setSelectedId(o.id)}>
+                    <td>{o.order_number}</td>
+                    <td>{o.customer_name}</td>
+                    <td>{o.status}</td>
+                  </tr>
+                ))}
+                {orders && orders.length === 0 && <tr><td colSpan={3} className="hint-text">Nothing waiting to be picked or packed.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {tab === "returns" && <ReturnsToStoreTab />}
     </div>
   );
 }
@@ -298,6 +308,63 @@ function PackLineRow({ pickLine, onChanged }: { pickLine: any; onChanged: () => 
       <td>
         {error && <div className="error-text">{error}</div>}
         <input placeholder="Scan barcode" value={scanValue} onChange={(e) => setScanValue(e.target.value)} style={{ width: 140 }} />
+        <button className="btn-secondary" disabled={busy} onClick={confirm}>Confirm</button>
+      </td>
+    </tr>
+  );
+}
+
+// Section 8: "Failed deliveries generate a return-to-store task -> items
+// must be scanned back into their bins, not silently restocked."
+function ReturnsToStoreTab() {
+  const [tasks, setTasks] = useState<any[] | null>(null);
+  async function load() { setTasks(await api.get("/delivery-returns")); }
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div>
+      <p className="hint-text">Items coming back from a failed delivery — scan/type the bin they're actually going into, never assume the suggestion.</p>
+      <button className="btn-secondary" onClick={load} style={{ marginBottom: 8 }}>Refresh</button>
+      <table className="data-table">
+        <thead><tr><th>Order</th><th>Item</th><th>Batch</th><th>Qty</th><th>Suggested bin</th><th></th></tr></thead>
+        <tbody>
+          {tasks?.map((t) => <ReturnTaskRow key={t.id} task={t} onChanged={load} />)}
+          {tasks && tasks.length === 0 && <tr><td colSpan={6} className="hint-text">No pending returns.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ReturnTaskRow({ task, onChanged }: { task: any; onChanged: () => void }) {
+  const [binCode, setBinCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function confirm() {
+    if (!binCode.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/delivery-returns/${task.id}/confirm`, { scannedBinCode: binCode.trim(), deviceId: "web-console" });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.body?.error ?? "Could not confirm.") : "Could not confirm.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <tr>
+      <td>{task.order_number}</td>
+      <td>{task.product_name}</td>
+      <td>{task.batch_no}</td>
+      <td>{task.quantity_base_units}</td>
+      <td>{task.suggested_bin_code ?? "—"}</td>
+      <td>
+        {error && <div className="error-text">{error}</div>}
+        <input placeholder="Scan/type bin code" value={binCode} onChange={(e) => setBinCode(e.target.value)} style={{ width: 140 }} />
         <button className="btn-secondary" disabled={busy} onClick={confirm}>Confirm</button>
       </td>
     </tr>

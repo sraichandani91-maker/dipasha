@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "./auth/AuthContext.js";
 import LoginPage from "./pages/LoginPage.js";
 import ProductsPage from "./pages/ProductsPage.js";
@@ -23,12 +23,13 @@ import NotificationsPage from "./pages/NotificationsPage.js";
 import ScanInvoicePage from "./pages/ScanInvoicePage.js";
 import DeliveryOrdersPage from "./pages/DeliveryOrdersPage.js";
 import PickPackPage from "./pages/PickPackPage.js";
+import RiderPage from "./pages/RiderPage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
   | "cycle-counts" | "expiry-audit" | "write-offs" | "reports"
   | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
-  | "delivery-orders" | "pick-pack";
+  | "delivery-orders" | "pick-pack" | "rider";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -37,6 +38,14 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("products");
   const [fulfillRequest, setFulfillRequest] = useState<FulfillRequest | null>(null);
   const [reviewMode, setReviewMode] = useState(false);
+
+  // Rider's role has no use for the default "products" landing tab
+  // (Section 8: "Rider logs in, sees assigned trips only") — `user` only
+  // resolves after an async /auth/me call, so this can't be `tab`'s
+  // initial useState value; it has to catch up once the role is known.
+  useEffect(() => {
+    if (user?.role === "rider") setTab("rider");
+  }, [user?.role]);
 
   function fulfillAtPos(req: FulfillRequest) {
     setFulfillRequest(req);
@@ -101,6 +110,9 @@ export default function App() {
           {(user.role === "owner" || user.role === "store_manager" || user.role === "picker_packer") && (
             <button className={tab === "pick-pack" ? "active" : ""} onClick={() => setTab("pick-pack")}>Pick &amp; pack</button>
           )}
+          {user.role === "rider" && (
+            <button className={tab === "rider" ? "active" : ""} onClick={() => setTab("rider")}>My trips</button>
+          )}
         </nav>
         <div className="spacer" />
         {user.impersonating && <span className="impersonating">IMPERSONATING {user.role.toUpperCase()}</span>}
@@ -143,6 +155,7 @@ export default function App() {
             {tab === "scan-invoice" && <ScanInvoicePage />}
             {tab === "delivery-orders" && <DeliveryOrdersPage />}
             {tab === "pick-pack" && <PickPackPage />}
+            {tab === "rider" && <RiderPage />}
           </>
         )}
       </div>

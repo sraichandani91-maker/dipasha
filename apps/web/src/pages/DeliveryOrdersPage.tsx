@@ -20,6 +20,10 @@ const STATUS_LABEL: Record<string, string> = {
   partially_available: "Packed — partial",
   rejected: "Declined",
   cancelled: "Cancelled",
+  assigned: "Assigned to rider",
+  out_for_delivery: "Out for delivery",
+  delivered: "Delivered",
+  delivery_failed: "Delivery failed",
 };
 
 /**
@@ -90,27 +94,67 @@ function PendingQueue({ onOpen }: { onOpen: (id: string) => void }) {
 
 function ActiveOrders({ onOpen }: { onOpen: (id: string) => void }) {
   const [rows, setRows] = useState<any[] | null>(null);
-  async function load() { setRows(await api.get("/orders/active")); }
+  const [riders, setRiders] = useState<Array<{ id: string; name: string; phone: string }>>([]);
+  async function load() {
+    setRows(await api.get("/orders/active"));
+    setRiders(await api.get("/riders"));
+  }
   useEffect(() => { load(); }, []);
 
   return (
     <div className="card">
       <button className="btn-secondary" onClick={load} style={{ marginBottom: 8 }}>Refresh</button>
       <table className="data-table">
-        <thead><tr><th>Order</th><th>Customer</th><th>Pincode</th><th>Status</th></tr></thead>
+        <thead><tr><th>Order</th><th>Customer</th><th>Pincode</th><th>Status</th><th>Rider</th></tr></thead>
         <tbody>
           {rows?.map((r) => (
-            <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => onOpen(r.id)}>
-              <td>{r.order_number}</td>
-              <td>{r.customer_name} · {r.customer_phone}</td>
+            <tr key={r.id}>
+              <td style={{ cursor: "pointer" }} onClick={() => onOpen(r.id)}>{r.order_number}</td>
+              <td style={{ cursor: "pointer" }} onClick={() => onOpen(r.id)}>{r.customer_name} · {r.customer_phone}</td>
               <td>{r.delivery_pincode ?? "—"}</td>
               <td>{STATUS_LABEL[r.status] ?? r.status}{r.is_partial && <span className="badge badge-warn" style={{ marginLeft: 6 }}>Partial</span>}</td>
+              <td>
+                {r.rider_name ? r.rider_name : ["packed", "partially_available"].includes(r.status) ? (
+                  <AssignRiderControl orderId={r.id} riders={riders} onAssigned={load} />
+                ) : "—"}
+              </td>
             </tr>
           ))}
-          {rows && rows.length === 0 && <tr><td colSpan={4} className="hint-text">No orders in flight.</td></tr>}
+          {rows && rows.length === 0 && <tr><td colSpan={5} className="hint-text">No orders in flight.</td></tr>}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function AssignRiderControl({ orderId, riders, onAssigned }: { orderId: string; riders: Array<{ id: string; name: string; phone: string }>; onAssigned: () => void }) {
+  const [riderId, setRiderId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function assign() {
+    if (!riderId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/orders/${orderId}/assign-rider`, { riderId });
+      onAssigned();
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.body?.error ?? "Could not assign.") : "Could not assign.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span onClick={(e) => e.stopPropagation()}>
+      <select value={riderId} onChange={(e) => setRiderId(e.target.value)} disabled={busy}>
+        <option value="">Assign rider…</option>
+        {riders.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+      </select>{" "}
+      <button className="btn-secondary" disabled={!riderId || busy} onClick={assign}>Assign</button>
+      {error && <div className="error-text">{error}</div>}
+    </span>
   );
 }
 
