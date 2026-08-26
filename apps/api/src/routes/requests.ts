@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createRequest, hasOpenQueueToday, incrementUnreachableAttempts, linkPendingProduct, listRequests, updateRequestStatus } from "../repo/customer-requests.js";
 import { reserveForRequest, ReservationError, sweepExpiredReservations } from "../repo/callback.js";
+import { getSetting } from "../repo/settings.js";
 
 const createRequestSchema = z
   .object({
@@ -103,5 +104,17 @@ export default async function requestRoutes(app: FastifyInstance) {
   // requests means no alarm, never train people to dismiss it."
   app.get("/requests/daily-review-check", { preHandler: app.authenticate }, async (_req, reply) => {
     reply.send(await hasOpenQueueToday());
+  });
+
+  // Section 6B.5's own configured numbers (seeded in M1, unused until now)
+  // — not a general settings endpoint (that's M13), just enough for the
+  // web alarm to fire on the actual schedule instead of a hardcoded guess.
+  app.get("/requests/daily-review-alarm-config", { preHandler: app.authenticate }, async (_req, reply) => {
+    reply.send({
+      timeLocal: await getSetting("daily_request_review_time_local", "18:00"),
+      repeatMinutes: await getSetting("daily_request_review_repeat_minutes", 15),
+      maxSnoozes: await getSetting("daily_request_review_max_snoozes", 3),
+      escalationMinutes: await getSetting("daily_request_review_escalation_minutes", 90),
+    });
   });
 }
