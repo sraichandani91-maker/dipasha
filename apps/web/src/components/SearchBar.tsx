@@ -54,10 +54,12 @@ function ScheduleBadge({ schedule }: { schedule: string }) {
 export default function SearchBar({
   context = "app_lookup",
   onSelect,
+  onRequestBook,
   autoFocus,
 }: {
   context?: "pos" | "app_lookup" | "request_book" | "purchase_entry";
   onSelect?: (product: SearchProduct) => void;
+  onRequestBook?: (product: SearchProduct) => void;
   autoFocus?: boolean;
 }) {
   const [query, setQuery] = useState("");
@@ -156,7 +158,15 @@ export default function SearchBar({
                           {outOfStock ? "Out of stock" : strAndLoose(p.stockBaseUnits, p.packSize, p.baseUnit)}
                         </div>
                         {p.topBinCode && <div className="hint-text">{p.topBinCode}</div>}
-                        {outOfStock && <button className="btn-secondary" style={{ marginTop: 4, fontSize: 11, padding: "4px 8px" }}>+ Request book</button>}
+                        {outOfStock && onRequestBook && (
+                          <button
+                            className="btn-secondary"
+                            style={{ marginTop: 4, fontSize: 11, padding: "4px 8px" }}
+                            onClick={(e) => { e.stopPropagation(); onRequestBook(p); }}
+                          >
+                            + Request book
+                          </button>
+                        )}
                       </div>
                     </div>
                   );

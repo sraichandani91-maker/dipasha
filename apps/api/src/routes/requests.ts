@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { createRequest, hasOpenQueueToday, linkPendingProduct, listRequests, updateRequestStatus } from "../repo/customer-requests.js";
+import { createRequest, hasOpenQueueToday, incrementUnreachableAttempts, linkPendingProduct, listRequests, updateRequestStatus } from "../repo/customer-requests.js";
 import { reserveForRequest, ReservationError, sweepExpiredReservations } from "../repo/callback.js";
 
 const createRequestSchema = z
@@ -67,6 +67,16 @@ export default async function requestRoutes(app: FastifyInstance) {
       if (err instanceof ReservationError) return reply.code(409).send({ error: err.code });
       throw err;
     }
+  });
+
+  // Section 6B.4: staff tried the callback and got no answer — logged so
+  // the queue shows it was attempted, not silently stuck. No auto-escalation
+  // yet (that's the WhatsApp piece in M8); this just records the attempt.
+  app.patch("/requests/:id/unreachable", { preHandler: app.authenticate }, async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+    const attempts = await incrementUnreachableAttempts(params.data.id);
+    reply.send({ unreachableAttempts: attempts });
   });
 
   app.patch("/requests/:id/link-pending-product", { preHandler: app.authenticate }, async (req, reply) => {

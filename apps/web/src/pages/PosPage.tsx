@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api.js";
 import { useAuth } from "../auth/AuthContext.js";
 import SearchBar from "../components/SearchBar.js";
 import QuantityInput from "../components/QuantityInput.js";
+import RequestFormModal from "../components/RequestFormModal.js";
 import { buildReceiptHtml } from "../lib/receipt.js";
 
 interface Line {
@@ -38,12 +39,29 @@ function computeLinePreview(l: Line) {
   return { mrpPerBaseUnit, gross, discountValue, taxable, discountPercentEffective };
 }
 
-export default function PosPage() {
+export interface FulfillRequest {
+  id: string;
+  product_id: string | null;
+  product_name: string | null;
+  customer_name: string;
+  customer_phone: string;
+  quantity_requested_units: number | null;
+}
+
+export default function PosPage({
+  fulfillRequest,
+  onConsumeFulfillRequest,
+}: {
+  fulfillRequest?: FulfillRequest | null;
+  onConsumeFulfillRequest?: () => void;
+}) {
   const { user } = useAuth();
   const isOwner = user?.role === "owner";
   const [lines, setLines] = useState<Line[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [fulfillsRequestId, setFulfillsRequestId] = useState<string | null>(null);
+  const [fulfillNote, setFulfillNote] = useState<string | null>(null);
   const [billDiscountValue, setBillDiscountValue] = useState(0);
   const [roundOff, setRoundOff] = useState(0);
   const [cashTendered, setCashTendered] = useState<number | "">("");
@@ -57,10 +75,11 @@ export default function PosPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [completedBill, setCompletedBill] = useState<any>(null);
+  const [requestModalProduct, setRequestModalProduct] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => { api.get("/held-bills").then(setHeld).catch(() => {}); }, []);
 
-  async function addLine(p: any) {
+  function addLine(p: any): number {
     const key = keySeq++;
     setLines((ls) => [...ls, {
       key, productId: p.id, productName: p.name, manufacturer: p.manufacturer, packSize: p.packSize, baseUnit: p.baseUnit,
@@ -69,7 +88,46 @@ export default function PosPage() {
       effectiveCostPerBaseUnit: undefined,
     }]);
     setShowSearch(false);
+    return key;
   }
+
+  // Section 6B.4 hand-off: the request book's "Customer arrived — bill
+  // now" button lifts the request up to App, which hands it back down
+  // here. There's no product-by-id lookup endpoint, so this reuses the
+  // same unified search the rest of POS already goes through. Guarded by
+  // a ref (not just the dep array) so StrictMode's dev-time double-invoke
+  // can't add the line twice for the same request.
+  const fulfillHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!fulfillRequest) return;
+    if (fulfillHandledRef.current === fulfillRequest.id) return;
+    fulfillHandledRef.current = fulfillRequest.id;
+    setCustomerName(fulfillRequest.customer_name);
+    setCustomerPhone(fulfillRequest.customer_phone);
+    setFulfillsRequestId(fulfillRequest.id);
+    setFulfillNote(null);
+    (async () => {
+      if (!fulfillRequest.product_id || !fulfillRequest.product_name) {
+        setFulfillNote("This request has no linked catalogue product — add the item manually below.");
+        onConsumeFulfillRequest?.();
+        return;
+      }
+      try {
+        const res = await api.get(`/search?q=${encodeURIComponent(fulfillRequest.product_name)}&context=pos`);
+        const product = res.groups.flatMap((g: any) => g.products).find((p: any) => p.id === fulfillRequest.product_id);
+        if (product) {
+          const key = addLine(product);
+          const qty = fulfillRequest.quantity_requested_units ?? 1;
+          await onQuantityChange(key, product.id, qty);
+        } else {
+          setFulfillNote("Couldn't preload the reserved item — add it manually below.");
+        }
+      } finally {
+        onConsumeFulfillRequest?.();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fulfillRequest]);
 
   async function updateLine(key: number, patch: Partial<Line>) {
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -129,12 +187,14 @@ export default function PosPage() {
         roundOff,
         tenders,
         prescriberDetails: needsPrescriberCapture ? { prescriberName, prescriberRegistrationNumber: prescriberReg, patientName, patientContact } : null,
+        fulfillsRequestId,
         deviceId: "web-console",
       });
       setCompletedBill(res);
       setLines([]);
       setCustomerName(""); setCustomerPhone(""); setBillDiscountValue(0); setRoundOff(0);
       setCashTendered(""); setPrescriberName(""); setPrescriberReg(""); setPatientName(""); setPatientContact("");
+      setFulfillsRequestId(null); setFulfillNote(null);
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.body?.error === "insufficient_stock") setError(`Only ${err.body.details.available} in stock, ${err.body.details.requested} requested.`);
@@ -188,10 +248,31 @@ export default function PosPage() {
           </div>
         )}
 
+        {fulfillsRequestId && (
+          <div className="card" style={{ background: "color-mix(in srgb, var(--status-info) 10%, white)", marginBottom: 16 }}>
+            <p style={{ margin: 0 }}>
+              <strong>Fulfilling a reserved request</strong> — this sale will release the reservation and mark it fulfilled.
+            </p>
+            {fulfillNote && <p className="hint-text" style={{ margin: "4px 0 0" }}>{fulfillNote}</p>}
+          </div>
+        )}
+
         <div className="card" style={{ marginBottom: 12 }}>
           <button className="btn-secondary" onClick={() => setShowSearch((s) => !s)}>{showSearch ? "Hide" : "+ Add item"} search</button>
-          {showSearch && <div style={{ marginTop: 10 }}><SearchBar context="pos" onSelect={addLine} autoFocus /></div>}
+          {showSearch && (
+            <div style={{ marginTop: 10 }}>
+              <SearchBar context="pos" onSelect={addLine} onRequestBook={(p) => setRequestModalProduct({ id: p.id, name: p.name })} autoFocus />
+            </div>
+          )}
         </div>
+
+        {requestModalProduct && (
+          <RequestFormModal
+            initialProduct={requestModalProduct}
+            onClose={() => setRequestModalProduct(null)}
+            onCreated={() => setRequestModalProduct(null)}
+          />
+        )}
 
         <div className="card">
           <table className="data-table">

@@ -6,15 +6,23 @@ import BinsPage from "./pages/BinsPage.js";
 import PurchaseEntryPage from "./pages/PurchaseEntryPage.js";
 import StockReceivedPage from "./pages/StockReceivedPage.js";
 import PutAwayPage from "./pages/PutAwayPage.js";
-import PosPage from "./pages/PosPage.js";
+import PosPage, { type FulfillRequest } from "./pages/PosPage.js";
+import RequestBookPage from "./pages/RequestBookPage.js";
+import PurchaseOrdersPage from "./pages/PurchaseOrdersPage.js";
 
-type Tab = "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway";
+type Tab = "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
 export default function App() {
   const { user, loading, logout, impersonate } = useAuth();
   const [tab, setTab] = useState<Tab>("products");
+  const [fulfillRequest, setFulfillRequest] = useState<FulfillRequest | null>(null);
+
+  function fulfillAtPos(req: FulfillRequest) {
+    setFulfillRequest(req);
+    setTab("pos");
+  }
 
   if (loading) return null;
   if (!user) return <LoginPage />;
@@ -36,6 +44,10 @@ export default function App() {
             <button className={tab === "stock-received" ? "active" : ""} onClick={() => setTab("stock-received")}>Stock received</button>
           )}
           <button className={tab === "putaway" ? "active" : ""} onClick={() => setTab("putaway")}>Put-away</button>
+          <button className={tab === "requests" ? "active" : ""} onClick={() => setTab("requests")}>Requests</button>
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "purchase-orders" ? "active" : ""} onClick={() => setTab("purchase-orders")}>Purchase orders</button>
+          )}
         </nav>
         <div className="spacer" />
         {user.impersonating && <span className="impersonating">IMPERSONATING {user.role.toUpperCase()}</span>}
@@ -53,12 +65,14 @@ export default function App() {
         <button className="btn-secondary" onClick={logout} style={{ marginLeft: 8 }}>Sign out</button>
       </div>
       <div className="content">
-        {tab === "pos" && <PosPage />}
+        {tab === "pos" && <PosPage fulfillRequest={fulfillRequest} onConsumeFulfillRequest={() => setFulfillRequest(null)} />}
         {tab === "products" && <ProductsPage />}
         {tab === "bins" && <BinsPage />}
         {tab === "purchases" && <PurchaseEntryPage />}
         {tab === "stock-received" && <StockReceivedPage />}
         {tab === "putaway" && <PutAwayPage />}
+        {tab === "requests" && <RequestBookPage onFulfillAtPos={fulfillAtPos} />}
+        {tab === "purchase-orders" && <PurchaseOrdersPage />}
       </div>
     </div>
   );
