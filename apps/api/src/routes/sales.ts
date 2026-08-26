@@ -32,6 +32,7 @@ const createSaleSchema = z.object({
     referenceNumber: z.string().nullable().optional(),
   })).min(1),
   prescriberDetails: z.object({
+    prescriberId: z.string().uuid().nullable().optional(),
     prescriberName: z.string().nullable().optional(),
     prescriberRegistrationNumber: z.string().nullable().optional(),
     patientName: z.string().nullable().optional(),
@@ -70,6 +71,7 @@ export default async function salesRoutes(app: FastifyInstance) {
           tenders: body.tenders.map((t) => ({ ...t, referenceNumber: t.referenceNumber ?? null })),
           prescriberDetails: body.prescriberDetails
             ? {
+                prescriberId: body.prescriberDetails.prescriberId ?? null,
                 prescriberName: body.prescriberDetails.prescriberName ?? null,
                 prescriberRegistrationNumber: body.prescriberDetails.prescriberRegistrationNumber ?? null,
                 patientName: body.prescriberDetails.patientName ?? null,

@@ -32,6 +32,7 @@ export interface CreateSaleInput {
   roundOff: number;
   tenders: Array<{ tenderType: "cash" | "upi" | "card" | "credit"; amount: number; referenceNumber: string | null }>;
   prescriberDetails: {
+    prescriberId: string | null;
     prescriberName: string | null;
     prescriberRegistrationNumber: string | null;
     patientName: string | null;
@@ -196,6 +197,26 @@ export async function createSale(input: CreateSaleInput) {
     if (tenderTotal < grandTotal - 0.5) {
       throw new ValidationError("insufficient_tender", { grandTotal, tendered: tenderTotal });
     }
+
+    // Section 9A.4: a credit sale has to trace back to someone's ledger —
+    // "billed to account" with no account identified is a contradiction,
+    // not a valid state, so this is a real correctness check rather than
+    // an invented business rule.
+    const creditTenderTotal = input.tenders.filter((t) => t.tenderType === "credit").reduce((a, t) => a + t.amount, 0);
+    if (creditTenderTotal > 0 && !input.customerPhone) {
+      throw new ValidationError("credit_requires_customer");
+    }
+    // Cash overage becomes change; credit has no such concept — a credit
+    // tender that overshoots the bill would silently inflate the
+    // customer's running balance beyond what they were actually billed
+    // (caught live: a mistyped credit amount of ₹1100 against a ₹291
+    // bill recorded a ₹1100 debt instead of ₹291). So any overage beyond
+    // rounding tolerance is rejected outright when credit is involved,
+    // rather than quietly becoming free "change" on an account balance.
+    if (creditTenderTotal > 0 && tenderTotal > grandTotal + 0.5) {
+      throw new ValidationError("credit_tender_exceeds_total", { grandTotal, tendered: tenderTotal });
+    }
+
     const cashTender = input.tenders.find((t) => t.tenderType === "cash");
     const changeDue = cashTender ? round2(tenderTotal - grandTotal) : 0;
 
@@ -254,15 +275,17 @@ export async function createSale(input: CreateSaleInput) {
     }
 
     // Section 6A.3: writes automatically to the statutory register — no
-    // separate manual entry. Captured even with fields blank, per "any
-    // field left blank is recorded as blank on the register rather than
-    // blocking the bill."
-    if (hasScheduleHOrH1) {
+    // separate manual entry. Captured even with fields blank for an H/H1
+    // sale, per "any field left blank is recorded as blank on the
+    // register rather than blocking the bill." For a non-H/H1 sale this
+    // only writes a row if the biller actually attached a prescriber —
+    // Section 9A.1's "optional but encouraged elsewhere," not mandatory.
+    if (hasScheduleHOrH1 || input.prescriberDetails) {
       const pd = input.prescriberDetails;
       await client.query(
-        `INSERT INTO sale_prescriber_details (sale_id, prescriber_name, prescriber_registration_number, patient_name, patient_contact)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [sale.id, pd?.prescriberName ?? null, pd?.prescriberRegistrationNumber ?? null, pd?.patientName ?? null, pd?.patientContact ?? null]
+        `INSERT INTO sale_prescriber_details (sale_id, prescriber_id, prescriber_name, prescriber_registration_number, patient_name, patient_contact)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [sale.id, pd?.prescriberId ?? null, pd?.prescriberName ?? null, pd?.prescriberRegistrationNumber ?? null, pd?.patientName ?? null, pd?.patientContact ?? null]
       );
     }
 

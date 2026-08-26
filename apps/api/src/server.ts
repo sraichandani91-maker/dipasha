@@ -23,6 +23,10 @@ import cycleCountRoutes from "./routes/cycle-counts.js";
 import expiryAuditRoutes from "./routes/expiry-audit.js";
 import writeOffRoutes from "./routes/write-offs.js";
 import statutoryReportRoutes from "./routes/statutory-reports.js";
+import prescriberRoutes from "./routes/prescribers.js";
+import marginReportRoutes from "./routes/margin-reports.js";
+import customerRoutes from "./routes/customers.js";
+import vendorComparisonRoutes from "./routes/vendor-comparison.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -57,6 +61,10 @@ export function buildServer(): FastifyInstance {
   app.register(expiryAuditRoutes);
   app.register(writeOffRoutes);
   app.register(statutoryReportRoutes);
+  app.register(prescriberRoutes);
+  app.register(marginReportRoutes);
+  app.register(customerRoutes);
+  app.register(vendorComparisonRoutes);
 
   app.get("/health", async (_req, reply) => {
     const dbOk = await pingDatabase().catch(() => false);

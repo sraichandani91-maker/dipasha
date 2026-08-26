@@ -25,6 +25,11 @@ export interface PurchaseLineInput {
   discountValue: number | null; // editable independently of percent — either can drive the other (Section 6.4)
   gstRate: number;
   cess: number;
+  // Section 9A.2 scheme tracking — only set when the biller actually
+  // knows what was promised (a scheme agreement, the vendor's PO
+  // confirmation). Most lines leave these null, correctly.
+  promisedQuantityBaseUnits: number | null;
+  promisedFreeQuantityBaseUnits: number | null;
 }
 
 export interface CreatePurchaseInvoiceInput {
@@ -39,6 +44,10 @@ export interface CreatePurchaseInvoiceInput {
   lines: PurchaseLineInput[];
   overrideNearExpiry: boolean;
   acknowledgeReconciliationMismatch: boolean;
+  // Section 9A.6 vendor scorecard — linking a GRN back to the PO it
+  // fulfils is what makes lead-time/fill-rate computable at all.
+  // Optional: not every purchase traces back to a PO this system raised.
+  purchaseOrderId: string | null;
   createdBy: string;
   deviceId: string;
   source: "app" | "web" | "web_manual";
@@ -177,17 +186,21 @@ export async function createPurchaseInvoice(input: CreatePurchaseInvoiceInput) {
       `INSERT INTO purchase_invoices
          (vendor_id, invoice_number, invoice_date, invoice_value_stated, payment_terms_days,
           bill_level_discount, freight_and_charges, round_off, taxable_value_total, tax_total,
-          net_payable_computed, reconciliation_diff, reconciliation_acknowledged, source, created_by, device_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+          net_payable_computed, reconciliation_diff, reconciliation_acknowledged, source, created_by, device_id, purchase_order_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        RETURNING id`,
       [
         input.vendorId, input.invoiceNumber, input.invoiceDate, input.invoiceValueStated, input.paymentTermsDays,
         input.billLevelDiscount, input.freightAndCharges, input.roundOff, round2(taxableValueTotal), round2(taxTotal),
         round2(netPayableComputed), round2(reconciliationDiff), Math.abs(reconciliationDiff) > tolerance,
-        input.source, input.createdBy, input.deviceId,
+        input.source, input.createdBy, input.deviceId, input.purchaseOrderId,
       ]
     );
     const invoiceId = invoiceRows[0].id;
+
+    if (input.purchaseOrderId) {
+      await client.query(`UPDATE purchase_orders SET status = 'received' WHERE id = $1`, [input.purchaseOrderId]);
+    }
 
     for (const l of computedLines) {
       const batch = await findOrCreateBatch(client, l.productId, l.batchNo, l.expiryDate, l.mrp, {
@@ -204,13 +217,13 @@ export async function createPurchaseInvoice(input: CreatePurchaseInvoiceInput) {
            (purchase_invoice_id, product_id, batch_id, pack_as_printed, quantity_base_units,
             free_quantity_base_units, rate_before_discount, discount_percent, discount_value,
             taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount, cess_amount, line_total,
-            apportioned_bill_discount, apportioned_charges)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+            apportioned_bill_discount, apportioned_charges, promised_quantity_base_units, promised_free_quantity_base_units)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
         [
           invoiceId, l.productId, batch.id, l.packAsPrinted, l.quantityBaseUnits, l.freeQuantityBaseUnits,
           l.rateBeforeDiscount, l.discountPercent, round2(l.discountValue), round2(l.taxableValue), l.gstRate,
           round2(l.cgstAmount), round2(l.sgstAmount), round2(l.igstAmount), round2(l.cessAmount), round2(l.lineTotal),
-          l.apportionedBillDiscount, l.apportionedCharges,
+          l.apportionedBillDiscount, l.apportionedCharges, l.promisedQuantityBaseUnits, l.promisedFreeQuantityBaseUnits,
         ]
       );
 

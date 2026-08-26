@@ -15,6 +15,8 @@ const lineSchema = z.object({
   discountValue: z.number().min(0).nullable().optional(),
   gstRate: z.number().min(0).max(28),
   cess: z.number().min(0).default(0),
+  promisedQuantityBaseUnits: z.number().int().min(0).nullable().optional(),
+  promisedFreeQuantityBaseUnits: z.number().int().min(0).nullable().optional(),
 });
 
 const createInvoiceSchema = z.object({
@@ -29,6 +31,7 @@ const createInvoiceSchema = z.object({
   lines: z.array(lineSchema).min(1),
   overrideNearExpiry: z.boolean().default(false),
   acknowledgeReconciliationMismatch: z.boolean().default(false),
+  purchaseOrderId: z.string().uuid().nullable().optional(),
   deviceId: z.string().min(1),
 });
 
@@ -49,7 +52,14 @@ export default async function purchaseRoutes(app: FastifyInstance) {
       try {
         const result = await createPurchaseInvoice({
           ...body,
-          lines: body.lines.map((l) => ({ ...l, packAsPrinted: l.packAsPrinted ?? null, discountValue: l.discountValue ?? null })),
+          lines: body.lines.map((l) => ({
+            ...l,
+            packAsPrinted: l.packAsPrinted ?? null,
+            discountValue: l.discountValue ?? null,
+            promisedQuantityBaseUnits: l.promisedQuantityBaseUnits ?? null,
+            promisedFreeQuantityBaseUnits: l.promisedFreeQuantityBaseUnits ?? null,
+          })),
+          purchaseOrderId: body.purchaseOrderId ?? null,
           createdBy: req.auth!.sub,
           source: "web", // apps/web is the only client for M3; the app gets its own client-type stamping once it's built
         });

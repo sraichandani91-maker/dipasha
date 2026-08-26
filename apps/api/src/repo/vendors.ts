@@ -12,6 +12,7 @@ export interface Vendor {
   gstStateCode: string | null;
   paymentTermsDays: number;
   status: "active" | "inactive";
+  defaultMinOrderPackUnits: number | null;
 }
 
 function mapRow(r: any): Vendor {
@@ -22,6 +23,7 @@ function mapRow(r: any): Vendor {
     gstStateCode: r.gst_state_code,
     paymentTermsDays: r.payment_terms_days,
     status: r.status,
+    defaultMinOrderPackUnits: r.default_min_order_pack_units,
   };
 }
 
@@ -51,4 +53,11 @@ export async function createVendor(input: {
     [input.name, input.gstin, gstStateCode, input.paymentTermsDays, input.createdBy]
   );
   return mapRow(rows[0]);
+}
+
+// Section 9A.7: "round the suggested order quantity up to the vendor's
+// minimum order pack." One default per vendor, not per product-vendor
+// pair — see DECISIONS.md for why.
+export async function updateVendorMoq(id: string, defaultMinOrderPackUnits: number | null) {
+  await requirePool().query(`UPDATE vendors SET default_min_order_pack_units = $1 WHERE id = $2`, [defaultMinOrderPackUnits, id]);
 }

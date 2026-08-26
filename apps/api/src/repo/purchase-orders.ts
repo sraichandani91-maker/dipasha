@@ -18,6 +18,7 @@ export interface SuggestedLine {
   suggestedVendorId: string | null;
   suggestedVendorName: string | null;
   lastRate: number | null;
+  moqRoundedUp: boolean;
 }
 
 // Section 6B.3: merges low stock + open customer requests into one
@@ -25,10 +26,12 @@ export interface SuggestedLine {
 // sellable stock is below the requested quantity" — if stock arrived in
 // the meantime, the request drops off the suggestion (the caller should
 // flag it for callback instead — that's the M5 callback-loop path, not
-// this one).
-export async function suggestedPurchaseOrderLines(): Promise<SuggestedLine[]> {
+// this one). Also returns Section 9A.7's clearance candidates — SKUs
+// low-stock math would otherwise suggest reordering, but whose entire
+// remaining stock is near expiry (see domain/reorder.ts).
+export async function suggestedPurchaseOrderLines() {
   const db = requirePool();
-  const lowStock = await lowStockSuggestions();
+  const { suggestions: lowStock, clearanceCandidates } = await lowStockSuggestions();
 
   const { rows: openRequests } = await db.query(
     `SELECT cr.id, cr.product_id, cr.quantity_requested_units
@@ -51,7 +54,7 @@ export async function suggestedPurchaseOrderLines(): Promise<SuggestedLine[]> {
     merged.set(s.productId, {
       productId: s.productId, productName: s.productName, suggestedQty: s.suggestedQty,
       sourceReasons: ["low_stock"], requesterCount: 0, requestIds: [],
-      suggestedVendorId: null, suggestedVendorName: null, lastRate: null,
+      suggestedVendorId: null, suggestedVendorName: null, lastRate: null, moqRoundedUp: false,
     });
   }
   for (const [productId, entry] of requestsByProduct) {
@@ -68,15 +71,18 @@ export async function suggestedPurchaseOrderLines(): Promise<SuggestedLine[]> {
       merged.set(productId, {
         productId, productName: productRows[0]?.name ?? "?", suggestedQty: entry.totalQty - currentStock,
         sourceReasons: ["customer_request"], requesterCount: entry.ids.length, requestIds: entry.ids,
-        suggestedVendorId: null, suggestedVendorName: null, lastRate: null,
+        suggestedVendorId: null, suggestedVendorName: null, lastRate: null, moqRoundedUp: false,
       });
     }
   }
 
-  // Vendor suggestion: last vendor this product was actually purchased from.
+  // Vendor suggestion: last vendor this product was actually purchased
+  // from, with the suggested quantity rounded up to that vendor's
+  // minimum order pack (Section 9A.7: "distributors sell by the box, not
+  // the strip").
   for (const line of merged.values()) {
     const { rows } = await db.query(
-      `SELECT v.id, v.name, pil.rate_before_discount
+      `SELECT v.id, v.name, v.default_min_order_pack_units, pil.rate_before_discount
        FROM purchase_invoice_lines pil
        JOIN purchase_invoices pi ON pi.id = pil.purchase_invoice_id
        JOIN vendors v ON v.id = pi.vendor_id
@@ -88,10 +94,15 @@ export async function suggestedPurchaseOrderLines(): Promise<SuggestedLine[]> {
       line.suggestedVendorId = rows[0].id;
       line.suggestedVendorName = rows[0].name;
       line.lastRate = Number(rows[0].rate_before_discount);
+      const moq = rows[0].default_min_order_pack_units;
+      if (moq && line.suggestedQty % moq !== 0) {
+        line.suggestedQty = Math.ceil(line.suggestedQty / moq) * moq;
+        line.moqRoundedUp = true;
+      }
     }
   }
 
-  return [...merged.values()];
+  return { lines: [...merged.values()], clearanceCandidates };
 }
 
 export interface CreatePoInput {
