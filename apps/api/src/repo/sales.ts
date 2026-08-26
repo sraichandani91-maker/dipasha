@@ -37,6 +37,7 @@ export interface CreateSaleInput {
     patientName: string | null;
     patientContact: string | null;
   } | null;
+  fulfillsRequestId: string | null; // Section 6B.4: links the bill back to the request for a true conversion rate
   createdBy: string;
   deviceId: string;
   source: "app" | "web" | "web_manual";
@@ -54,145 +55,154 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+// Everything here runs on ONE transactional connection from the very
+// first query, including FEFO allocation and (when this bill fulfils a
+// request) releasing that request's reservation — Section 6B.4's
+// fulfilment path needs the release visible to FEFO before it allocates,
+// and ANY later failure (insufficient tender, a bad line, whatever) must
+// undo the release along with everything else. A reservation release
+// that survived a failed sale would silently strand the customer's held
+// stock with no bill to show for it — caught exactly that bug in
+// testing before this was restructured.
 export async function createSale(input: CreateSaleInput) {
-  const db = requirePool();
-
   if (input.lines.length === 0) throw new ValidationError("no_lines");
 
-  // Requires product metadata (base_unit price basis, gst_rate,
-  // schedule) before allocation — fetched once up front.
-  const productIds = input.lines.map((l) => l.productId);
-  const { rows: productRows } = await db.query(
-    `SELECT id, gst_rate, schedule_category, requires_prescription FROM products WHERE id = ANY($1::uuid[])`,
-    [productIds]
-  );
-  const productById = new Map(productRows.map((p) => [p.id, p]));
-
-  interface ComputedSubLine {
-    requestedLineNo: number;
-    productId: string;
-    batchId: string;
-    binId: string;
-    quantity: number;
-    mrp: number;
-    discountPercent: number;
-    discountValue: number;
-    taxableValue: number;
-    gstRate: number;
-    cgstAmount: number;
-    sgstAmount: number;
-    lineTotal: number;
-    effectiveCostPerBaseUnitSnapshot: number | null;
-    manualBatchOverride: boolean;
-    manualBatchOverrideReason: string | null;
-  }
-
-  const subLines: ComputedSubLine[] = [];
-  let hasScheduleHOrH1 = false;
-
-  for (let i = 0; i < input.lines.length; i++) {
-    const line = input.lines[i]!;
-    const product = productById.get(line.productId);
-    if (!product) throw new ValidationError("product_not_found", { productId: line.productId });
-    if (product.schedule_category === "H" || product.schedule_category === "H1") hasScheduleHOrH1 = true;
-
-    let allocations: Array<{ batchId: string; binId: string; quantity: number }>;
-    if (line.manualBatchId) {
-      const specific = await getSpecificBatchStock(line.productId, line.manualBatchId);
-      if (!specific || specific.available < line.quantityBaseUnits) {
-        throw new ValidationError("insufficient_stock", { productId: line.productId, available: specific?.available ?? 0, requested: line.quantityBaseUnits });
-      }
-      allocations = [{ batchId: line.manualBatchId, binId: specific.binId, quantity: line.quantityBaseUnits }];
-    } else {
-      try {
-        allocations = await allocateFefo(line.productId, line.quantityBaseUnits);
-      } catch (err) {
-        if (err instanceof InsufficientStockError) {
-          throw new ValidationError("insufficient_stock", { productId: line.productId, available: err.available, requested: err.requested });
-        }
-        throw err;
-      }
-    }
-
-    // Line-level discount is entered against the whole requested
-    // quantity; split proportionally across FEFO sub-lines by quantity.
-    const { rows: batchRows } = await db.query(
-      `SELECT id, mrp, effective_cost_per_base_unit, cost_unknown FROM batches WHERE id = ANY($1::uuid[])`,
-      [allocations.map((a) => a.batchId)]
-    );
-    const batchById = new Map(batchRows.map((b) => [b.id, b]));
-
-    for (const alloc of allocations) {
-      const batch = batchById.get(alloc.batchId);
-      // batches.mrp is per-PACK (Section 5A.3); taxable value etc. need
-      // per-base-unit pricing, resolved once pack sizes are fetched below.
-      subLines.push({
-        requestedLineNo: i,
-        productId: line.productId,
-        batchId: alloc.batchId,
-        binId: alloc.binId,
-        quantity: alloc.quantity,
-        mrp: Number(batch.mrp),
-        discountPercent: line.discountPercent,
-        discountValue: 0, // resolved below once pack size is known
-        taxableValue: 0,
-        gstRate: Number(product.gst_rate),
-        cgstAmount: 0,
-        sgstAmount: 0,
-        lineTotal: 0,
-        effectiveCostPerBaseUnitSnapshot: batch.cost_unknown ? null : batch.effective_cost_per_base_unit === null ? null : Number(batch.effective_cost_per_base_unit),
-        manualBatchOverride: !!line.manualBatchId,
-        manualBatchOverrideReason: line.manualBatchOverrideReason,
-      });
-    }
-  }
-
-  // Resolve MRP-per-base-unit now that we have every sub-line's product.
-  const { rows: packRows } = await db.query(`SELECT id, pack_size FROM products WHERE id = ANY($1::uuid[])`, [productIds]);
-  const packSizeByProduct = new Map(packRows.map((p) => [p.id, p.pack_size as number]));
-
-  for (let i = 0; i < input.lines.length; i++) {
-    const line = input.lines[i]!;
-    const lineSubLines = subLines.filter((s) => s.requestedLineNo === i);
-    const packSize = packSizeByProduct.get(line.productId) ?? 1;
-    const totalQty = line.quantityBaseUnits;
-    const mrpPerBaseUnit = lineSubLines[0]!.mrp / packSize;
-    const grossValue = totalQty * mrpPerBaseUnit;
-    const lineDiscountValue = line.discountValue ?? (grossValue * line.discountPercent) / 100;
-
-    for (const sub of lineSubLines) {
-      const shareOfQty = sub.quantity / totalQty;
-      const subGross = sub.quantity * mrpPerBaseUnit;
-      const subDiscount = lineDiscountValue * shareOfQty;
-      const taxableValue = subGross - subDiscount;
-      const gst = splitCounterGst(taxableValue, sub.gstRate);
-      sub.discountValue = round2(subDiscount);
-      sub.taxableValue = round2(taxableValue);
-      sub.cgstAmount = round2(gst.cgstAmount);
-      sub.sgstAmount = round2(gst.sgstAmount);
-      sub.lineTotal = round2(taxableValue + gst.cgstAmount + gst.sgstAmount);
-    }
-  }
-
-  const taxableValueTotal = subLines.reduce((a, s) => a + s.taxableValue, 0);
-  const taxTotal = subLines.reduce((a, s) => a + s.cgstAmount + s.sgstAmount, 0);
-  const grandTotal = round2(taxableValueTotal + taxTotal - input.billDiscountValue + input.roundOff);
-
-  const tenderTotal = input.tenders.reduce((a, t) => a + t.amount, 0);
-  if (tenderTotal < grandTotal - 0.5) {
-    throw new ValidationError("insufficient_tender", { grandTotal, tendered: tenderTotal });
-  }
-  const cashTender = input.tenders.find((t) => t.tenderType === "cash");
-  const changeDue = cashTender ? round2(tenderTotal - grandTotal) : 0;
-
-  let customer = null;
-  if (input.customerPhone || input.customerName) {
-    customer = await findOrCreateCustomer(input.customerName ?? "Walk-in", input.customerPhone);
-  }
-
+  const db = requirePool();
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+
+    if (input.fulfillsRequestId) {
+      await client.query(
+        `UPDATE stock_reservations SET released_at = now(), released_reason = 'fulfilled'
+         WHERE customer_request_id = $1 AND released_at IS NULL`,
+        [input.fulfillsRequestId]
+      );
+    }
+
+    const productIds = input.lines.map((l) => l.productId);
+    const { rows: productRows } = await client.query(
+      `SELECT id, gst_rate, schedule_category, requires_prescription, pack_size FROM products WHERE id = ANY($1::uuid[])`,
+      [productIds]
+    );
+    const productById = new Map(productRows.map((p) => [p.id, p]));
+
+    interface ComputedSubLine {
+      requestedLineNo: number;
+      productId: string;
+      batchId: string;
+      binId: string;
+      quantity: number;
+      mrp: number;
+      discountPercent: number;
+      discountValue: number;
+      taxableValue: number;
+      gstRate: number;
+      cgstAmount: number;
+      sgstAmount: number;
+      lineTotal: number;
+      effectiveCostPerBaseUnitSnapshot: number | null;
+      manualBatchOverride: boolean;
+      manualBatchOverrideReason: string | null;
+    }
+
+    const subLines: ComputedSubLine[] = [];
+    let hasScheduleHOrH1 = false;
+
+    for (let i = 0; i < input.lines.length; i++) {
+      const line = input.lines[i]!;
+      const product = productById.get(line.productId);
+      if (!product) throw new ValidationError("product_not_found", { productId: line.productId });
+      if (product.schedule_category === "H" || product.schedule_category === "H1") hasScheduleHOrH1 = true;
+
+      let allocations: Array<{ batchId: string; binId: string; quantity: number }>;
+      if (line.manualBatchId) {
+        const specific = await getSpecificBatchStock(line.productId, line.manualBatchId, client);
+        if (!specific || specific.available < line.quantityBaseUnits) {
+          throw new ValidationError("insufficient_stock", { productId: line.productId, available: specific?.available ?? 0, requested: line.quantityBaseUnits });
+        }
+        allocations = [{ batchId: line.manualBatchId, binId: specific.binId, quantity: line.quantityBaseUnits }];
+      } else {
+        try {
+          allocations = await allocateFefo(line.productId, line.quantityBaseUnits, client);
+        } catch (err) {
+          if (err instanceof InsufficientStockError) {
+            throw new ValidationError("insufficient_stock", { productId: line.productId, available: err.available, requested: err.requested });
+          }
+          throw err;
+        }
+      }
+
+      const { rows: batchRows } = await client.query(
+        `SELECT id, mrp, effective_cost_per_base_unit, cost_unknown FROM batches WHERE id = ANY($1::uuid[])`,
+        [allocations.map((a) => a.batchId)]
+      );
+      const batchById = new Map(batchRows.map((b) => [b.id, b]));
+
+      for (const alloc of allocations) {
+        const batch = batchById.get(alloc.batchId);
+        // batches.mrp is per-PACK (Section 5A.3); taxable value etc. need
+        // per-base-unit pricing, resolved in the pass below.
+        subLines.push({
+          requestedLineNo: i,
+          productId: line.productId,
+          batchId: alloc.batchId,
+          binId: alloc.binId,
+          quantity: alloc.quantity,
+          mrp: Number(batch.mrp),
+          discountPercent: line.discountPercent,
+          discountValue: 0,
+          taxableValue: 0,
+          gstRate: Number(product.gst_rate),
+          cgstAmount: 0,
+          sgstAmount: 0,
+          lineTotal: 0,
+          effectiveCostPerBaseUnitSnapshot: batch.cost_unknown ? null : batch.effective_cost_per_base_unit === null ? null : Number(batch.effective_cost_per_base_unit),
+          manualBatchOverride: !!line.manualBatchId,
+          manualBatchOverrideReason: line.manualBatchOverrideReason,
+        });
+      }
+    }
+
+    for (let i = 0; i < input.lines.length; i++) {
+      const line = input.lines[i]!;
+      const lineSubLines = subLines.filter((s) => s.requestedLineNo === i);
+      const product = productById.get(line.productId);
+      const packSize = product?.pack_size ?? 1;
+      const totalQty = line.quantityBaseUnits;
+      const mrpPerBaseUnit = lineSubLines[0]!.mrp / packSize;
+      const grossValue = totalQty * mrpPerBaseUnit;
+      const lineDiscountValue = line.discountValue ?? (grossValue * line.discountPercent) / 100;
+
+      for (const sub of lineSubLines) {
+        const shareOfQty = sub.quantity / totalQty;
+        const subGross = sub.quantity * mrpPerBaseUnit;
+        const subDiscount = lineDiscountValue * shareOfQty;
+        const taxableValue = subGross - subDiscount;
+        const gst = splitCounterGst(taxableValue, sub.gstRate);
+        sub.discountValue = round2(subDiscount);
+        sub.taxableValue = round2(taxableValue);
+        sub.cgstAmount = round2(gst.cgstAmount);
+        sub.sgstAmount = round2(gst.sgstAmount);
+        sub.lineTotal = round2(taxableValue + gst.cgstAmount + gst.sgstAmount);
+      }
+    }
+
+    const taxableValueTotal = subLines.reduce((a, s) => a + s.taxableValue, 0);
+    const taxTotal = subLines.reduce((a, s) => a + s.cgstAmount + s.sgstAmount, 0);
+    const grandTotal = round2(taxableValueTotal + taxTotal - input.billDiscountValue + input.roundOff);
+
+    const tenderTotal = input.tenders.reduce((a, t) => a + t.amount, 0);
+    if (tenderTotal < grandTotal - 0.5) {
+      throw new ValidationError("insufficient_tender", { grandTotal, tendered: tenderTotal });
+    }
+    const cashTender = input.tenders.find((t) => t.tenderType === "cash");
+    const changeDue = cashTender ? round2(tenderTotal - grandTotal) : 0;
+
+    let customer = null;
+    if (input.customerPhone || input.customerName) {
+      customer = await findOrCreateCustomer(input.customerName ?? "Walk-in", input.customerPhone);
+    }
 
     const seriesPrefix = await billSeriesPrefix(input.channel);
     const billNumber = await reserveNumber(client, seriesPrefix);
@@ -253,6 +263,16 @@ export async function createSale(input: CreateSaleInput) {
         `INSERT INTO sale_prescriber_details (sale_id, prescriber_name, prescriber_registration_number, patient_name, patient_contact)
          VALUES ($1,$2,$3,$4,$5)`,
         [sale.id, pd?.prescriberName ?? null, pd?.prescriberRegistrationNumber ?? null, pd?.patientName ?? null, pd?.patientContact ?? null]
+      );
+    }
+
+    // Section 6B.4: "When the customer buys, link the bill to the
+    // request and mark it fulfilled — that gives you a true
+    // request-to-sale conversion rate."
+    if (input.fulfillsRequestId) {
+      await client.query(
+        `UPDATE customer_requests SET status = 'fulfilled', fulfilled_sale_id = $1, updated_at = now() WHERE id = $2`,
+        [sale.id, input.fulfillsRequestId]
       );
     }
 

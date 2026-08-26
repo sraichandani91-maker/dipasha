@@ -1,6 +1,7 @@
 import { pool } from "../db.js";
 import { findOrCreateBatch, findStagingBin } from "./batches.js";
 import { suggestPutawayBin } from "../domain/putaway-suggestion.js";
+import { checkCallbackMatches } from "./callback.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -69,6 +70,7 @@ export async function createStockReceived(input: CreateStockReceivedInput) {
     );
 
     await client.query("COMMIT");
+    await checkCallbackMatches([input.productId]); // Section 6B.4
     return { movementId: movementRows[0].id, batchId: batch.id, putawayTaskId: taskRows[0].id };
   } catch (err) {
     await client.query("ROLLBACK");

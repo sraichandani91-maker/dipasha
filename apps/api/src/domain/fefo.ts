@@ -1,7 +1,11 @@
 import { pool } from "../db.js";
 import { getSetting } from "../repo/settings.js";
 
-function requirePool() {
+export interface Queryable {
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
+}
+
+function requirePool(): Queryable {
   if (!pool) throw new Error("DATABASE_URL is not configured");
   return pool;
 }
@@ -27,15 +31,22 @@ export class InsufficientStockError extends Error {
  * excluded entirely — sellable stock only. If satisfying the requested
  * quantity needs more than one batch, this returns one allocation per
  * batch — the caller prints one sub-line per batch (Section 6A.2).
+ *
+ * Accepts an optional transactional client — callers that release a
+ * stock reservation and then immediately re-allocate against the freed
+ * stock (Section 6B.4's fulfilment path) must do both on the SAME
+ * connection inside the SAME transaction, or the allocation won't see
+ * the release, and a failed sale afterward would leave the release
+ * permanently applied with nothing to show for it.
  */
-export async function allocateFefo(productId: string, quantityNeeded: number): Promise<FefoAllocation[]> {
-  const db = requirePool();
+export async function allocateFefo(productId: string, quantityNeeded: number, client?: Queryable): Promise<FefoAllocation[]> {
+  const db = client ?? requirePool();
   const blockDays = await getSetting("near_expiry_pick_block_days", 30);
 
   const { rows } = await db.query(
     `
     SELECT b.id AS batch_id, b.batch_no, b.expiry_date, s.bin_id, s.quantity_base_units
-    FROM stock s
+    FROM sellable_stock s
     JOIN batches b ON b.id = s.batch_id
     WHERE s.product_id = $1
       AND s.quantity_base_units > 0
@@ -68,11 +79,11 @@ export async function allocateFefo(productId: string, quantityNeeded: number): P
 // Manual batch override (Section 6A.2: "permitted but requires a reason
 // and is logged"). Still excludes blocked batches — an override changes
 // WHICH sellable batch is picked, never makes an unsellable one sellable.
-export async function getSpecificBatchStock(productId: string, batchId: string): Promise<{ binId: string; available: number } | null> {
-  const db = requirePool();
+export async function getSpecificBatchStock(productId: string, batchId: string, client?: Queryable): Promise<{ binId: string; available: number } | null> {
+  const db = client ?? requirePool();
   const { rows } = await db.query(
     `
-    SELECT s.bin_id, s.quantity_base_units FROM stock s
+    SELECT s.bin_id, s.quantity_base_units FROM sellable_stock s
     JOIN batches b ON b.id = s.batch_id
     WHERE s.product_id = $1 AND s.batch_id = $2 AND b.blocked = false AND s.quantity_base_units > 0
     `,

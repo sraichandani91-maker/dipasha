@@ -37,6 +37,7 @@ const createSaleSchema = z.object({
     patientName: z.string().nullable().optional(),
     patientContact: z.string().nullable().optional(),
   }).nullable().optional(),
+  fulfillsRequestId: z.string().uuid().nullable().optional(),
   deviceId: z.string().min(1),
 });
 
@@ -75,6 +76,7 @@ export default async function salesRoutes(app: FastifyInstance) {
                 patientContact: body.prescriberDetails.patientContact ?? null,
               }
             : null,
+          fulfillsRequestId: body.fulfillsRequestId ?? null,
           createdBy: req.auth!.sub,
           deviceId: body.deviceId,
           source: "web",

@@ -5,6 +5,7 @@ import { findOrCreateBatch, findStagingBin } from "./batches.js";
 import { apportionByTaxableValue, computeEffectiveCostPerBaseUnit } from "../domain/landed-cost.js";
 import { splitGst } from "../domain/gst-split.js";
 import { suggestPutawayBin } from "../domain/putaway-suggestion.js";
+import { checkCallbackMatches } from "./callback.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -234,6 +235,13 @@ export async function createPurchaseInvoice(input: CreatePurchaseInvoiceInput) {
     }
 
     await client.query("COMMIT");
+
+    // Section 6B.4: the callback loop check runs on every inbound
+    // commit, outside the transaction — it only ever moves
+    // customer_requests forward and the GRN itself has already
+    // committed successfully by this point regardless.
+    await checkCallbackMatches(computedLines.map((l) => l.productId));
+
     return {
       id: invoiceId,
       taxableValueTotal: round2(taxableValueTotal),

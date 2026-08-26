@@ -16,6 +16,8 @@ import stockIssueRoutes from "./routes/stock-issue.js";
 import returnsRoutes from "./routes/returns.js";
 import dayCloseRoutes from "./routes/day-close.js";
 import reportRoutes from "./routes/reports.js";
+import requestRoutes from "./routes/requests.js";
+import purchaseOrderRoutes from "./routes/purchase-orders.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -43,6 +45,8 @@ export function buildServer(): FastifyInstance {
   app.register(returnsRoutes);
   app.register(dayCloseRoutes);
   app.register(reportRoutes);
+  app.register(requestRoutes);
+  app.register(purchaseOrderRoutes);
 
   app.get("/health", async (_req, reply) => {
     const dbOk = await pingDatabase().catch(() => false);
