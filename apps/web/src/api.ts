@@ -76,3 +76,30 @@ export function apiPdfUrl(path: string): string {
   // token.
   return `${BASE}${path}`;
 }
+
+// Shared by every M6 report/export download — same auth-header-needs-a-
+// blob-fetch reasoning as apiPdfUrl above, generalized past just PDFs.
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const { accessToken } = getTokens();
+  const res = await fetch(`${BASE}${path}`, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });
+  if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// multipart/form-data POST (write-off photo evidence) — deliberately not
+// routed through request()'s JSON Content-Type logic; the browser sets
+// the correct multipart boundary header itself when given a FormData body.
+export async function postForm(path: string, form: FormData): Promise<any> {
+  const { accessToken } = getTokens();
+  const res = await fetch(`${BASE}${path}`, { method: "POST", body: form, headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });
+  const contentType = res.headers.get("content-type") ?? "";
+  const body = contentType.includes("application/json") ? await res.json().catch(() => null) : null;
+  if (!res.ok) throw new ApiError(res.status, body);
+  return body;
+}

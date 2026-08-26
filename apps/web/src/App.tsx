@@ -11,8 +11,14 @@ import RequestBookPage from "./pages/RequestBookPage.js";
 import PurchaseOrdersPage from "./pages/PurchaseOrdersPage.js";
 import DailyReviewScreen from "./pages/DailyReviewScreen.js";
 import DailyReviewAlarm from "./components/DailyReviewAlarm.js";
+import CycleCountPage from "./pages/CycleCountPage.js";
+import ExpiryAuditPage from "./pages/ExpiryAuditPage.js";
+import WriteOffsPage from "./pages/WriteOffsPage.js";
+import ReportsPage from "./pages/ReportsPage.js";
 
-type Tab = "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders";
+type Tab =
+  | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
+  | "cycle-counts" | "expiry-audit" | "write-offs" | "reports";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -51,6 +57,16 @@ export default function App() {
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "purchase-orders" ? "active" : ""} onClick={() => setTab("purchase-orders")}>Purchase orders</button>
           )}
+          <button className={tab === "cycle-counts" ? "active" : ""} onClick={() => setTab("cycle-counts")}>Cycle counts</button>
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "expiry-audit" ? "active" : ""} onClick={() => setTab("expiry-audit")}>Expiry audit</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "write-offs" ? "active" : ""} onClick={() => setTab("write-offs")}>Write-offs</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "reports" ? "active" : ""} onClick={() => setTab("reports")}>Reports</button>
+          )}
         </nav>
         <div className="spacer" />
         {user.impersonating && <span className="impersonating">IMPERSONATING {user.role.toUpperCase()}</span>}
@@ -81,6 +97,10 @@ export default function App() {
             {tab === "putaway" && <PutAwayPage />}
             {tab === "requests" && <RequestBookPage onFulfillAtPos={fulfillAtPos} />}
             {tab === "purchase-orders" && <PurchaseOrdersPage />}
+            {tab === "cycle-counts" && <CycleCountPage />}
+            {tab === "expiry-audit" && <ExpiryAuditPage />}
+            {tab === "write-offs" && <WriteOffsPage />}
+            {tab === "reports" && <ReportsPage />}
           </>
         )}
       </div>
