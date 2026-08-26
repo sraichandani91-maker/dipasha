@@ -14,6 +14,13 @@ export const config = {
   otpTtlSeconds: Number(process.env.OTP_TTL_SECONDS ?? 5 * 60),
   otpMaxAttempts: Number(process.env.OTP_MAX_ATTEMPTS ?? 5),
 
+  // WhatsApp bill send (Section 6A.6 / Section 14). Same story as OTP
+  // delivery above — no real provider account exists yet, so this is a
+  // pluggable interface (`lib/whatsapp-sender.ts`) with a dev console
+  // sender for now. "console" is the only value this build understands
+  // until real provider credentials are added.
+  whatsappProvider: process.env.WHATSAPP_PROVIDER ?? "console",
+
   // Local disk (Section 9's write-off photo evidence). No object storage
   // (S3/GCS) is configured for this pilot's single-VPS deployment — see
   // DECISIONS.md. Move this to real object storage before running more

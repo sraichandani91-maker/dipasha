@@ -79,6 +79,8 @@ export default function PosPage({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [completedBill, setCompletedBill] = useState<any>(null);
+  const [whatsappStatus, setWhatsappStatus] = useState<string | null>(null);
+  const [whatsappBusy, setWhatsappBusy] = useState(false);
   const [requestModalProduct, setRequestModalProduct] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => { api.get("/held-bills").then(setHeld).catch(() => {}); }, []);
@@ -231,6 +233,7 @@ export default function PosPage({
         deviceId: "web-console",
       });
       setCompletedBill(res);
+      setWhatsappStatus(null);
       setLines([]);
       setCustomerName(""); setCustomerPhone(""); setBillDiscountValue(0); setRoundOff(0);
       setCashTendered(""); setPrescriberId(null); setPrescriberName(""); setPrescriberReg(""); setPatientName(""); setPatientContact("");
@@ -265,6 +268,28 @@ export default function PosPage({
     setHeld(await api.get("/held-bills"));
   }
 
+  async function sendWhatsApp() {
+    if (!completedBill) return;
+    setWhatsappBusy(true);
+    setWhatsappStatus(null);
+    try {
+      const res = await api.post(`/sales/${completedBill.id}/send-whatsapp`);
+      setWhatsappStatus(
+        res.status === "logged_dev_mode"
+          ? "No WhatsApp provider is set up yet — the message was logged on the server instead of actually sent (see DECISIONS.md)."
+          : res.isResend ? "Sent again." : "Sent."
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.body?.error === "no_customer_phone") {
+        setWhatsappStatus("This bill has no customer phone number — add one before completing the sale to send via WhatsApp.");
+      } else {
+        setWhatsappStatus("Could not send — try again.");
+      }
+    } finally {
+      setWhatsappBusy(false);
+    }
+  }
+
   async function printReceipt() {
     if (!completedBill) return;
     await api.post(`/sales/${completedBill.id}/mark-printed`).catch(() => {});
@@ -286,7 +311,14 @@ export default function PosPage({
           <div className="card" style={{ background: "color-mix(in srgb, var(--status-good) 10%, white)", marginBottom: 16 }}>
             <p style={{ margin: 0, fontWeight: 700 }}>Bill {completedBill.billNumber} completed — ₹{completedBill.grandTotal}</p>
             {completedBill.changeDue > 0 && <p style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 700 }}>Change due: ₹{completedBill.changeDue}</p>}
-            <button className="btn-primary" style={{ marginTop: 8 }} onClick={printReceipt}>Print receipt</button>
+            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button className="btn-primary" onClick={printReceipt}>Print receipt</button>
+              <button className="btn-secondary" disabled={whatsappBusy || !completedBill.customerPhone} onClick={sendWhatsApp}>
+                {whatsappBusy ? "Sending…" : "Send via WhatsApp"}
+              </button>
+              {!completedBill.customerPhone && <span className="hint-text">No customer phone on this bill</span>}
+            </div>
+            {whatsappStatus && <p className="hint-text" style={{ marginTop: 6 }}>{whatsappStatus}</p>}
           </div>
         )}
 

@@ -4,6 +4,9 @@ import { pool } from "../db.js";
 import { createSale, ValidationError } from "../repo/sales.js";
 import { createHeldBill, deleteHeldBill, listHeldBills } from "../repo/held-bills.js";
 import { allocateFefo, InsufficientStockError } from "../domain/fefo.js";
+import { config } from "../config.js";
+import { createWhatsAppSender } from "../lib/whatsapp-sender.js";
+import { buildBillWhatsAppText } from "../lib/whatsapp-message.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -186,6 +189,37 @@ export default async function salesRoutes(app: FastifyInstance) {
     if (rows.length === 0) return reply.code(404).send({ error: "not_found" });
     reply.send({ printCount: rows[0].print_count, isDuplicate: rows[0].print_count > 1 });
   });
+
+  // Send bill via WhatsApp (Section 6A.6 / Section 14). Sending again is
+  // always allowed (same posture as reprint) but counted, not silently
+  // repeated without a trace — `whatsapp_send_count`/`whatsapp_last_sent_at`
+  // mirror `print_count`.
+  app.post(
+    "/sales/:id/send-whatsapp",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+
+      const db = requirePool();
+      const { rows } = await db.query(
+        `SELECT bill_number, created_at, grand_total, customer_name, customer_phone FROM sales WHERE id = $1`,
+        [params.data.id]
+      );
+      if (rows.length === 0) return reply.code(404).send({ error: "not_found" });
+      const sale = rows[0];
+      if (!sale.customer_phone) return reply.code(409).send({ error: "no_customer_phone" });
+
+      const sender = createWhatsAppSender(config.whatsappProvider, req.log);
+      const result = await sender.send({ phone: sale.customer_phone, text: buildBillWhatsAppText(sale) });
+
+      const { rows: updated } = await db.query(
+        `UPDATE sales SET whatsapp_send_count = whatsapp_send_count + 1, whatsapp_last_sent_at = now() WHERE id = $1 RETURNING whatsapp_send_count`,
+        [params.data.id]
+      );
+      reply.send({ status: result.status, sendCount: updated[0].whatsapp_send_count, isResend: updated[0].whatsapp_send_count > 1 });
+    }
+  );
 
   // Hold / recall (Section 6A.4)
   app.get("/held-bills", { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] }, async (_req, reply) => {

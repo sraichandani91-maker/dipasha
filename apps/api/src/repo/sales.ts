@@ -233,7 +233,7 @@ export async function createSale(input: CreateSaleInput) {
          (bill_number, channel, customer_id, customer_name, customer_phone, taxable_value, bill_discount_value,
           tax_total, round_off, grand_total, amount_tendered, change_due, source, created_by, device_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-       RETURNING id, bill_number, created_at`,
+       RETURNING id, bill_number, created_at, customer_phone`,
       [
         billNumber, input.channel, customer?.id ?? null, customer?.name ?? null, customer?.phone ?? input.customerPhone ?? null,
         round2(taxableValueTotal), input.billDiscountValue, round2(taxTotal), input.roundOff, grandTotal, tenderTotal, changeDue,
@@ -300,7 +300,7 @@ export async function createSale(input: CreateSaleInput) {
     }
 
     await client.query("COMMIT");
-    return { id: sale.id, billNumber: sale.bill_number, createdAt: sale.created_at, taxableValueTotal: round2(taxableValueTotal), taxTotal: round2(taxTotal), grandTotal, changeDue };
+    return { id: sale.id, billNumber: sale.bill_number, createdAt: sale.created_at, customerPhone: sale.customer_phone, taxableValueTotal: round2(taxableValueTotal), taxTotal: round2(taxTotal), grandTotal, changeDue };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
