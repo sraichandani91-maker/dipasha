@@ -25,7 +25,7 @@ export function buildReceiptHtml(sale: {
       (l) => `
       <tr>
         <td>${escapeHtml(l.product_name)}${l.schedule_category !== "OTC" ? ` <b>[${l.schedule_category}]</b>` : ""}<br>
-          <span class="meta">Batch ${escapeHtml(l.batch_no)} · Exp ${formatMonthYear(l.expiry_date)} · HSN ${escapeHtml(l.hsn_code ?? "")}</span></td>
+          <span class="meta">Batch ${escapeHtml(l.batch_no)} · Exp ${formatMonthYear(l.expiry_date)} · HSN ${escapeHtml(l.hsn_code ?? "")}${l.bin_code ? ` · Rack ${escapeHtml(l.bin_code)}` : ""}</span></td>
         <td class="num">${l.quantity_base_units}</td>
         <td class="num">₹${Number(l.mrp / l.pack_size).toFixed(2)}</td>
         <td class="num">₹${Number(l.taxable_value).toFixed(2)}</td>

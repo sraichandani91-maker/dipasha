@@ -160,10 +160,11 @@ export default async function salesRoutes(app: FastifyInstance) {
     const { rows: saleRows } = await db.query(`SELECT * FROM sales WHERE id = $1`, [params.data.id]);
     if (saleRows.length === 0) return reply.code(404).send({ error: "not_found" });
     const { rows: lineRows } = await db.query(
-      `SELECT sl.*, p.name AS product_name, p.schedule_category, p.base_unit, p.pack_size, p.hsn_code, b.batch_no, b.expiry_date
+      `SELECT sl.*, p.name AS product_name, p.schedule_category, p.base_unit, p.pack_size, p.hsn_code, b.batch_no, b.expiry_date, bin.code AS bin_code
        FROM sale_lines sl
        JOIN products p ON p.id = sl.product_id
        LEFT JOIN batches b ON b.id = sl.batch_id
+       LEFT JOIN bins bin ON bin.id = sl.bin_id
        WHERE sl.sale_id = $1 ORDER BY sl.requested_line_no`,
       [params.data.id]
     );
