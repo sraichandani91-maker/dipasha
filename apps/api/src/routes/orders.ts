@@ -118,13 +118,23 @@ export default async function orderRoutes(app: FastifyInstance) {
     }
   );
 
-  app.get("/orders/:id", { preHandler: [app.authenticate, app.requireRole("owner", "store_manager", "picker_packer")] }, async (req, reply) => {
-    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
-    if (!params.success) return reply.code(400).send({ error: "invalid_id" });
-    const result = await getOrder(params.data.id);
-    if (!result) return reply.code(404).send({ error: "not_found" });
-    reply.send(result);
-  });
+  app.get(
+    "/orders/:id",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager", "picker_packer", "rider")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+      const result = await getOrder(params.data.id);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      // A rider may only view an order actually assigned to them — role
+      // alone isn't enough here, unlike every other role check in this
+      // route file (Section 8: "sees assigned trips only").
+      if (req.auth!.role === "rider" && result.order.rider_id !== req.auth!.sub) {
+        return reply.code(403).send({ error: "not_assigned_to_you" });
+      }
+      reply.send(result);
+    }
+  );
 
   app.post(
     "/orders/:id/lines",

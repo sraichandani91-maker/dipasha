@@ -263,9 +263,12 @@ export async function listPendingOrders() {
 
 export async function listActiveOrders() {
   const { rows } = await requirePool().query(
-    `SELECT id, order_number, status, customer_name, customer_phone, delivery_pincode, is_partial, created_at
-     FROM orders WHERE status IN ('customer_confirmed', 'picking', 'picked', 'packed', 'partially_available')
-     ORDER BY created_at ASC`
+    `SELECT o.id, o.order_number, o.status, o.customer_name, o.customer_phone, o.delivery_pincode, o.is_partial,
+       o.created_at, o.rider_id, u.name AS rider_name
+     FROM orders o LEFT JOIN users u ON u.id = o.rider_id
+     WHERE o.status IN ('customer_confirmed', 'picking', 'picked', 'packed', 'partially_available',
+       'assigned', 'out_for_delivery')
+     ORDER BY o.created_at ASC`
   );
   return rows;
 }

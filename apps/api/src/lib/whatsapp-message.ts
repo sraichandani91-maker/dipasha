@@ -49,6 +49,18 @@ export interface OrderPartiallyAvailablePayload {
   unavailableCount: number;
 }
 
+export interface OrderOutForDeliveryPayload {
+  orderNumber: string;
+  customerName: string;
+  riderName: string;
+  riderPhone: string;
+}
+
+export interface OrderDeliveredPayload {
+  orderNumber: string;
+  customerName: string;
+}
+
 export function buildWhatsAppText(triggerType: string, payload: Record<string, unknown>): string {
   switch (triggerType) {
     case "bill_generated":
@@ -61,6 +73,10 @@ export function buildWhatsAppText(triggerType: string, payload: Record<string, u
       return buildOrderQuoteText(payload as unknown as OrderQuotePayload);
     case "order_partially_available":
       return buildOrderPartiallyAvailableText(payload as unknown as OrderPartiallyAvailablePayload);
+    case "order_out_for_delivery":
+      return buildOrderOutForDeliveryText(payload as unknown as OrderOutForDeliveryPayload);
+    case "order_delivered":
+      return buildOrderDeliveredText(payload as unknown as OrderDeliveredPayload);
     default:
       throw new Error(`No WhatsApp message builder for trigger type "${triggerType}"`);
   }
@@ -132,5 +148,20 @@ function buildOrderPartiallyAvailableText(p: OrderPartiallyAvailablePayload): st
     `Hi ${p.customerName}, order ${p.orderNumber} from Dipasha Medical Store has been packed, but ${p.unavailableCount} item(s) could not be included.`,
     ``,
     `We'll follow up separately on those. The rest of your order is on its way.`,
+  ].join("\n");
+}
+
+// Section 12A.2: "...out for delivery with rider name and number..."
+function buildOrderOutForDeliveryText(p: OrderOutForDeliveryPayload): string {
+  return [
+    `Hi ${p.customerName}, your order ${p.orderNumber} from Dipasha Medical Store is out for delivery.`,
+    ``,
+    `Rider: ${p.riderName} (${p.riderPhone})`,
+  ].join("\n");
+}
+
+function buildOrderDeliveredText(p: OrderDeliveredPayload): string {
+  return [
+    `Hi ${p.customerName}, your order ${p.orderNumber} from Dipasha Medical Store has been delivered. Thank you for shopping with us!`,
   ].join("\n");
 }

@@ -43,6 +43,14 @@ export async function findUserById(id: string): Promise<User | null> {
   return rows[0] ? mapRow(rows[0]) : null;
 }
 
+// Minimal listing to populate the rider-assignment dropdown (Section 8)
+// — full staff/user management (create, suspend, edit) is Section 10.2's
+// "Staff and roles" module, scoped to M13, not built here.
+export async function listActiveRiders(): Promise<Array<{ id: string; name: string; phone: string }>> {
+  const { rows } = await requirePool().query(`SELECT id, name, phone FROM users WHERE role = 'rider' AND status = 'active' ORDER BY name`);
+  return rows;
+}
+
 export async function createUser(input: {
   phone: string;
   name: string;
