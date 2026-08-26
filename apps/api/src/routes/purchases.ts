@@ -62,6 +62,7 @@ export default async function purchaseRoutes(app: FastifyInstance) {
           purchaseOrderId: body.purchaseOrderId ?? null,
           createdBy: req.auth!.sub,
           source: "web", // apps/web is the only client for M3; the app gets its own client-type stamping once it's built
+          entryMethod: "manual",
         });
         reply.code(201).send(result);
       } catch (err) {

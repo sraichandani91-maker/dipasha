@@ -51,6 +51,7 @@ export interface CreatePurchaseInvoiceInput {
   createdBy: string;
   deviceId: string;
   source: "app" | "web" | "web_manual";
+  entryMethod: "manual" | "ai_scan";
 }
 
 export class ValidationConflictError extends Error {
@@ -186,14 +187,14 @@ export async function createPurchaseInvoice(input: CreatePurchaseInvoiceInput) {
       `INSERT INTO purchase_invoices
          (vendor_id, invoice_number, invoice_date, invoice_value_stated, payment_terms_days,
           bill_level_discount, freight_and_charges, round_off, taxable_value_total, tax_total,
-          net_payable_computed, reconciliation_diff, reconciliation_acknowledged, source, created_by, device_id, purchase_order_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+          net_payable_computed, reconciliation_diff, reconciliation_acknowledged, entry_method, source, created_by, device_id, purchase_order_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING id`,
       [
         input.vendorId, input.invoiceNumber, input.invoiceDate, input.invoiceValueStated, input.paymentTermsDays,
         input.billLevelDiscount, input.freightAndCharges, input.roundOff, round2(taxableValueTotal), round2(taxTotal),
         round2(netPayableComputed), round2(reconciliationDiff), Math.abs(reconciliationDiff) > tolerance,
-        input.source, input.createdBy, input.deviceId, input.purchaseOrderId,
+        input.entryMethod, input.source, input.createdBy, input.deviceId, input.purchaseOrderId,
       ]
     );
     const invoiceId = invoiceRows[0].id;
