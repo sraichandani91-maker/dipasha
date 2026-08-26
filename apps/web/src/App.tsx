@@ -3,8 +3,11 @@ import { useAuth } from "./auth/AuthContext.js";
 import LoginPage from "./pages/LoginPage.js";
 import ProductsPage from "./pages/ProductsPage.js";
 import BinsPage from "./pages/BinsPage.js";
+import PurchaseEntryPage from "./pages/PurchaseEntryPage.js";
+import StockReceivedPage from "./pages/StockReceivedPage.js";
+import PutAwayPage from "./pages/PutAwayPage.js";
 
-type Tab = "products" | "bins";
+type Tab = "products" | "bins" | "purchases" | "stock-received" | "putaway";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -22,6 +25,13 @@ export default function App() {
         <nav>
           <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}>Products</button>
           <button className={tab === "bins" ? "active" : ""} onClick={() => setTab("bins")}>Bins</button>
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "purchases" ? "active" : ""} onClick={() => setTab("purchases")}>Purchase entry</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "stock-received" ? "active" : ""} onClick={() => setTab("stock-received")}>Stock received</button>
+          )}
+          <button className={tab === "putaway" ? "active" : ""} onClick={() => setTab("putaway")}>Put-away</button>
         </nav>
         <div className="spacer" />
         {user.impersonating && <span className="impersonating">IMPERSONATING {user.role.toUpperCase()}</span>}
@@ -41,6 +51,9 @@ export default function App() {
       <div className="content">
         {tab === "products" && <ProductsPage />}
         {tab === "bins" && <BinsPage />}
+        {tab === "purchases" && <PurchaseEntryPage />}
+        {tab === "stock-received" && <StockReceivedPage />}
+        {tab === "putaway" && <PutAwayPage />}
       </div>
     </div>
   );

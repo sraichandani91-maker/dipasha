@@ -1,0 +1,32 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { createVendor, listVendors } from "../repo/vendors.js";
+
+const createVendorSchema = z.object({
+  name: z.string().min(1),
+  gstin: z.string().length(15).nullable().optional(),
+  paymentTermsDays: z.number().int().min(0).optional(),
+});
+
+export default async function vendorRoutes(app: FastifyInstance) {
+  app.get("/vendors", { preHandler: app.authenticate }, async (_req, reply) => {
+    reply.send(await listVendors());
+  });
+
+  app.post(
+    "/vendors",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const parsed = createVendorSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
+      const v = parsed.data;
+      const created = await createVendor({
+        name: v.name,
+        gstin: v.gstin ?? null,
+        paymentTermsDays: v.paymentTermsDays ?? 0,
+        createdBy: req.auth!.sub,
+      });
+      reply.code(201).send(created);
+    }
+  );
+}

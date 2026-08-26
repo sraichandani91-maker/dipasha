@@ -7,6 +7,10 @@ import productRoutes from "./routes/products.js";
 import saltRoutes from "./routes/salts.js";
 import binRoutes from "./routes/bins.js";
 import searchRoutes from "./routes/search.js";
+import vendorRoutes from "./routes/vendors.js";
+import purchaseRoutes from "./routes/purchases.js";
+import stockMovementRoutes from "./routes/stock-movements.js";
+import putawayRoutes from "./routes/putaway.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -25,6 +29,10 @@ export function buildServer(): FastifyInstance {
   app.register(saltRoutes);
   app.register(binRoutes);
   app.register(searchRoutes);
+  app.register(vendorRoutes);
+  app.register(purchaseRoutes);
+  app.register(stockMovementRoutes);
+  app.register(putawayRoutes);
 
   app.get("/health", async (_req, reply) => {
     const dbOk = await pingDatabase().catch(() => false);

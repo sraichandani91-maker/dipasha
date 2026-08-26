@@ -4,12 +4,13 @@ Backend + web console + (later) Android staff app for a retail pharmacy running 
 
 Built milestone by milestone per the agreed build order — see `DECISIONS.md` for what's been decided at each step, and don't skip ahead of the current milestone.
 
-## Status: M2 — product master, bin master, label printing, unified search
+## Status: M3 — GST purchase entry, stock_received, put-away
 
 What exists right now:
-- `apps/web` — the first real UI. React + Vite console: phone+OTP login, product master (list + create, with salt-master autocomplete and duplicate detection), bin master (list + create), the unified search of Section 5B (one bar, brand-or-salt, substitute grouping, out-of-stock still shown), a printable A4 bin-label sheet download, and owner role-impersonation with a visible banner
-- `apps/api` — Fastify + TypeScript API: `/health`, phone+OTP login, JWT access/refresh, PIN idle-lock re-auth, owner impersonation, role-gated `/products`, product/bin CRUD, `/search`, and bin label-sheet PDF generation (see `apps/api/MIGRATIONS.md` and `DECISIONS.md`)
-- Full data model: settings, users/roles, salt master, product master + composition child table, bin master, batches, search log, and the append-only movement ledger (all 9 `movement_type` values, DB-trigger-enforced immutability, on-hand stock as a derived `VIEW`, never a stored column)
+- `apps/web` — phone+OTP login, product master (list + create, with salt-master autocomplete and duplicate detection), bin master (list + create), the unified search of Section 5B, a printable A4 bin-label sheet download, owner role-impersonation with a visible banner, **GST purchase entry** (a real distributor-invoice-shaped line grid with live reconciliation preview), **stock received** (non-GST inbound), and the **put-away queue** (manual bin confirm with mandatory reason, since the web console has no scanner — Section 10.1)
+- The dual-entry `QuantityInput` component (Section 5A.2) — strips + loose, auto-carrying on blur — built once in M3, meant to be reused by every future screen that takes a quantity (billing, counts, issues, write-offs)
+- `apps/api` — Fastify + TypeScript API: `/health`, phone+OTP login, JWT access/refresh, PIN idle-lock re-auth, owner impersonation, role-gated `/products`, product/bin/vendor CRUD, `/search`, bin label-sheet PDF generation, GST purchase invoices (landed-cost computation including free-quantity apportionment, CGST/SGST/IGST split by vendor state, reconciliation tolerance, near-expiry and duplicate-invoice checks), `stock_received`, and put-away tasks with hard-enforced cold-chain/Schedule-H1 bin zoning (see `apps/api/MIGRATIONS.md` and `DECISIONS.md`)
+- Full data model: settings, users/roles, salt master, product master + composition child table, bin master, batches, search log, vendors, purchase invoices + lines, put-away tasks, and the append-only movement ledger (all 9 `movement_type` values, DB-trigger-enforced immutability, on-hand stock as a derived `VIEW`, never a stored column)
 - Seed script: 4 role users, 25 salts, 50 dummy SKUs (auto-grouped into real substitute groups), 59 bins across every zone prefix, batches with opening stock
 - `packages/theme` — shared design tokens (estimated from the real logo/site screenshot — see `packages/theme/README.md`)
 - Docker Compose: Postgres + API + web (nginx) + Caddy (automatic HTTPS, path-split `/api/*` vs the console)
@@ -64,4 +65,4 @@ See `RUNBOOK.md` for deploying to a real VPS with HTTPS on a subdomain.
 
 ## Build order
 
-Milestones M0–M16 as agreed. Each one gets built, tested by the owner, then the next starts — no skipping ahead, no scope creep beyond what's specified. Current milestone: **M2**, done pending sign-off. Next: **M3** — manual GST purchase entry, `stock_received`, put-away with scanning.
+Milestones M0–M16 as agreed. Each one gets built, tested by the owner, then the next starts — no skipping ahead, no scope creep beyond what's specified. Current milestone: **M3**, done pending sign-off. Next: **M4** — counter POS and GST billing, `stock_issue`, sale returns, day-close. The first milestone that earns money.
