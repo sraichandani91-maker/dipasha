@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { createBin, getBinsByIds, listBins, updateBin } from "../repo/bins.js";
+import { BinError, createBin, getBinsByIds, getRackMap, listBins, updateBin } from "../repo/bins.js";
+import { mergeBinStock, InventoryError } from "../repo/inventory.js";
 import { buildBinLabelSheetPdf } from "../domain/label-sheet.js";
 
 const ZONES = ["CC", "SH", "RX", "IN", "QC", "PK", "FM"] as const;
@@ -68,9 +69,44 @@ export default async function binRoutes(app: FastifyInstance) {
       const parsed = updateBinSchema.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
 
-      const updated = await updateBin(paramsResult.data.id, parsed.data);
-      if (!updated) return reply.code(404).send({ error: "not_found_or_no_changes" });
-      reply.send({ id: paramsResult.data.id, updated: true });
+      try {
+        const updated = await updateBin(paramsResult.data.id, parsed.data);
+        if (!updated) return reply.code(404).send({ error: "not_found_or_no_changes" });
+        reply.send({ id: paramsResult.data.id, updated: true });
+      } catch (err) {
+        if (err instanceof BinError) return reply.code(409).send({ error: err.code, details: err.details });
+        throw err;
+      }
+    }
+  );
+
+  // Section 10.2: "Visual rack map — a grid view of aisles, bays, and
+  // shelf levels with fill percentage and value heat."
+  app.get(
+    "/bins/rack-map",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (_req, reply) => {
+      reply.send(await getRackMap());
+    }
+  );
+
+  // Section 10.2: "merge... bins" — queues a bin_transfer put-away task
+  // per item currently in the source bin (see repo/inventory.ts's
+  // mergeBinStock), same as "Drag-to-reslot fast movers, which generates
+  // the physical move tasks."
+  app.post(
+    "/bins/:id/merge",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      const body = z.object({ targetBinId: z.string().uuid() }).safeParse(req.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
+      try {
+        reply.send(await mergeBinStock(params.data.id, body.data.targetBinId, req.auth!.sub));
+      } catch (err) {
+        if (err instanceof InventoryError) return reply.code(409).send({ error: err.code, details: err.details });
+        throw err;
+      }
     }
   );
 

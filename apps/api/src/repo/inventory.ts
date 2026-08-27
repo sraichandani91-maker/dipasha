@@ -237,6 +237,38 @@ export async function createBinTransferTask(input: {
   return { taskId: rows[0].id };
 }
 
+// Section 10.2 Bin master: "merge... bins." Queues a bin_transfer task
+// for every (product, batch) currently sitting in the source bin, same
+// as a single move-stock action — merge doesn't silently combine the
+// two bins' records; it's "move everything out of this bin" as a batch,
+// still requiring a floor staffer to scan-confirm each item into the
+// target bin before the source bin's stock is actually gone (and, per
+// updateBin's own retire-block above, before the source bin can be
+// retired at all).
+export async function mergeBinStock(sourceBinId: string, targetBinId: string, requestedBy: string): Promise<{ taskIds: string[] }> {
+  if (sourceBinId === targetBinId) throw new InventoryError("same_bin");
+  const { rows: targetRows } = await requirePool().query(`SELECT id FROM bins WHERE id = $1 AND status = 'active'`, [targetBinId]);
+  if (!targetRows[0]) throw new InventoryError("destination_bin_not_found");
+
+  const { rows: contents } = await requirePool().query(
+    `SELECT product_id, batch_id, quantity_base_units FROM stock WHERE bin_id = $1 AND quantity_base_units > 0`,
+    [sourceBinId]
+  );
+  const taskIds: string[] = [];
+  for (const row of contents) {
+    const { taskId } = await createBinTransferTask({
+      productId: row.product_id,
+      batchId: row.batch_id,
+      sourceBinId,
+      destinationBinId: targetBinId,
+      quantityBaseUnits: row.quantity_base_units,
+      requestedBy,
+    });
+    taskIds.push(taskId);
+  }
+  return { taskIds };
+}
+
 // --- Bulk CSV operations with mandatory preview-and-confirm diff --------
 // Section 10.2: "with a mandatory preview-and-confirm diff screen before
 // commit, showing every row that will change." Preview and commit both
