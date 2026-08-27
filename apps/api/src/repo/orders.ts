@@ -6,6 +6,9 @@ import { reserveNumber } from "../domain/bill-numbering.js";
 import { findOrCreateCustomer } from "./customers.js";
 import { createRequest } from "./customer-requests.js";
 import { enqueueNotification } from "../domain/notifications.js";
+import { cancelSale, CancelSaleError } from "./returns.js";
+
+const PRE_PICK_STATUSES = ["received", "under_review", "quoted", "customer_confirmed", "awaiting_prescription"];
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -499,4 +502,152 @@ export async function verifyPrescription(orderId: string, verifiedBy: string) {
     `UPDATE orders SET status = 'customer_confirmed', updated_at = now() WHERE id = $1 AND status = 'awaiting_prescription'`,
     [orderId]
   );
+}
+
+// --- Section 10.2 "Orders": full list/export, edit pre-pick, cancel ----
+
+export interface OrderListFilter {
+  status?: string;
+  from?: string;
+  to?: string;
+  search?: string;
+}
+
+export async function listAllOrders(filter: OrderListFilter) {
+  const clauses: string[] = [];
+  const params: any[] = [];
+  if (filter.status) {
+    params.push(filter.status);
+    clauses.push(`o.status = $${params.length}`);
+  }
+  if (filter.from) {
+    params.push(filter.from);
+    clauses.push(`o.created_at >= $${params.length}`);
+  }
+  if (filter.to) {
+    params.push(filter.to);
+    clauses.push(`o.created_at < ($${params.length}::date + interval '1 day')`);
+  }
+  if (filter.search) {
+    params.push(`%${filter.search}%`);
+    clauses.push(`(o.customer_name ILIKE $${params.length} OR o.customer_phone ILIKE $${params.length} OR o.order_number ILIKE $${params.length})`);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const { rows } = await requirePool().query(
+    `SELECT o.id, o.order_number, o.status, o.customer_name, o.customer_phone, o.delivery_pincode,
+       o.rx_required, o.rx_verified, o.is_partial, o.delivery_charge, o.quote_total,
+       o.rider_id, u.name AS rider_name, o.sale_id,
+       o.created_at, o.quoted_at, o.customer_confirmed_at, o.pick_started_at, o.pick_completed_at,
+       o.pack_completed_at, o.assigned_at, o.handover_scanned_at, o.delivered_at, o.cancelled_at,
+       o.cancelled_reason_code, o.updated_at
+     FROM orders o LEFT JOIN users u ON u.id = o.rider_id
+     ${where}
+     ORDER BY o.created_at DESC
+     LIMIT 1000`,
+    params
+  );
+  return rows;
+}
+
+// Section 10.2: "Edit an order pre-pick: add or remove lines, change
+// quantity, apply substitution." Quantity change and substitution reuse
+// resolveOrderLine's existing "match"/"substitute" actions above — they
+// already do exactly this (set product_id + quantity_confirmed_units)
+// for any line; add/remove are the two genuinely new primitives, both
+// gated to the same pre-pick statuses. Nothing downstream references an
+// order_line until start-picking creates order_pick_lines from it, so a
+// removed line has no orphaned FK to worry about.
+async function assertPrePick(db: Queryable, orderId: string): Promise<void> {
+  const { rows } = await db.query(`SELECT status FROM orders WHERE id = $1`, [orderId]);
+  if (!rows[0]) throw new OrderError("order_not_found");
+  if (!PRE_PICK_STATUSES.includes(rows[0].status)) throw new OrderError("not_editable_pre_pick", { status: rows[0].status });
+}
+
+export async function addCatalogLineToOrder(orderId: string, productId: string, quantityRequestedUnits: number): Promise<{ id: string }> {
+  const db = requirePool();
+  await assertPrePick(db, orderId);
+  const { rows: productRows } = await db.query(`SELECT requires_prescription FROM products WHERE id = $1`, [productId]);
+  if (!productRows[0]) throw new OrderError("product_not_found");
+  const mrpByProduct = await currentMrpByProduct(db, [productId]);
+
+  const { rows: countRows } = await db.query(`SELECT COALESCE(MAX(line_no), 0) AS max_no FROM order_lines WHERE order_id = $1`, [orderId]);
+  const lineNo = countRows[0].max_no + 1;
+  const { rows } = await db.query(
+    `INSERT INTO order_lines (order_id, line_no, source_type, product_id, quantity_requested_units, quantity_confirmed_units, unit_price, line_status, requires_prescription)
+     VALUES ($1,$2,'catalog',$3,$4,$4,$5,'matched',$6) RETURNING id`,
+    [orderId, lineNo, productId, quantityRequestedUnits, mrpByProduct.get(productId) ?? null, productRows[0].requires_prescription]
+  );
+  if (productRows[0].requires_prescription) {
+    await db.query(`UPDATE orders SET rx_required = true, updated_at = now() WHERE id = $1`, [orderId]);
+  }
+  return { id: rows[0].id };
+}
+
+export async function removeOrderLine(orderId: string, lineId: string): Promise<void> {
+  const db = requirePool();
+  await assertPrePick(db, orderId);
+  const { rowCount } = await db.query(`DELETE FROM order_lines WHERE id = $1 AND order_id = $2`, [lineId, orderId]);
+  if (!rowCount) throw new OrderError("line_not_found");
+}
+
+export const ORDER_CANCEL_REASON_CODES = ["customer_requested", "duplicate_order", "payment_issue", "out_of_stock", "other"] as const;
+export type OrderCancelReasonCode = (typeof ORDER_CANCEL_REASON_CODES)[number];
+
+// Section 10.2: "Cancel an order with reason code, with automatic stock
+// reversal." Before pack, nothing has actually moved stock yet — FEFO
+// allocation at start-picking only pins a batch on order_pick_lines, the
+// real movement_ledger deduction happens at pack time (Section 6A.8) —
+// so cancelling before that point is purely a status change, nothing to
+// reverse. Once packed/partially_available, a real sale exists
+// (Section 6A.8's pack-time invoice) and this reuses cancelSale
+// wholesale (Section 6A.7) — the exact same reversal, day-close block,
+// and "never delete a bill" rule POS cancellation already follows.
+// Once a rider is involved (assigned onward), M11's own failed-delivery
+// flow is the correct path, not this one — cancelling a physically
+// dispatched order needs the rider to actually bring it back.
+export async function cancelOrder(
+  orderId: string,
+  input: { reasonCode: OrderCancelReasonCode; note: string; actorUserId: string; deviceId: string }
+): Promise<void> {
+  const db = requirePool();
+  const { rows } = await db.query(`SELECT * FROM orders WHERE id = $1`, [orderId]);
+  const order = rows[0];
+  if (!order) throw new OrderError("order_not_found");
+  if (["cancelled", "rejected", "delivered"].includes(order.status)) throw new OrderError("already_terminal", { status: order.status });
+  if (["assigned", "out_for_delivery", "delivery_failed"].includes(order.status)) {
+    throw new OrderError("use_delivery_flow", { status: order.status });
+  }
+
+  if (["packed", "partially_available"].includes(order.status) && order.sale_id) {
+    try {
+      await cancelSale(order.sale_id, `${input.reasonCode}: ${input.note}`, input.actorUserId, input.deviceId, "web");
+    } catch (err) {
+      if (err instanceof CancelSaleError) throw new OrderError(`sale_${err.code}`);
+      throw err;
+    }
+  }
+
+  await db.query(
+    `UPDATE orders SET status = 'cancelled', cancelled_reason_code = $1, cancelled_note = $2, cancelled_by = $3, cancelled_at = now(), updated_at = now() WHERE id = $4`,
+    [input.reasonCode, input.note, input.actorUserId, orderId]
+  );
+}
+
+// Section 10.2: "Refund initiation (stubbed until the payment gateway is
+// live)." A real record, not a fake success — see the M13.6 migration
+// comment for why status never leaves 'requested' in this build.
+export async function initiateRefund(orderId: string, input: { amount: number; reason: string; requestedBy: string }): Promise<{ id: string }> {
+  const { rows } = await requirePool().query(
+    `INSERT INTO order_refunds (order_id, amount, reason, requested_by) VALUES ($1,$2,$3,$4) RETURNING id`,
+    [orderId, input.amount, input.reason, input.requestedBy]
+  );
+  return { id: rows[0].id };
+}
+
+export async function listOrderRefunds(orderId: string) {
+  const { rows } = await requirePool().query(
+    `SELECT r.*, u.name AS requested_by_name FROM order_refunds r JOIN users u ON u.id = r.requested_by WHERE r.order_id = $1 ORDER BY r.requested_at DESC`,
+    [orderId]
+  );
+  return rows;
 }

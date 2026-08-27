@@ -59,6 +59,45 @@ export async function assignRider(orderId: string, riderId: string, actorUserId:
   }
 }
 
+// Section 10.2: "Force-reassign an order to a different rider." Only the
+// single order given, unlike assignRider's whole-trip fan-out — a force
+// reassignment is a dispatch exception (a rider called in sick, a
+// delivery is stuck), not the normal batch-assignment path, so it
+// shouldn't silently drag sibling orders along with it. Once an order
+// has already reached out_for_delivery this only corrects the system
+// record — it doesn't move a physical package the original rider is
+// still holding, and the note is required precisely so that real-world
+// coordination is visible, not implied by the UI.
+export async function reassignRider(orderId: string, newRiderId: string, note: string, actorUserId: string): Promise<void> {
+  const db = requirePool();
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: riderRows } = await client.query(`SELECT id, role, status FROM users WHERE id = $1 FOR UPDATE`, [newRiderId]);
+    const rider = riderRows[0];
+    if (!rider || rider.role !== "rider") throw new DeliveryError("not_a_rider");
+    if (rider.status !== "active") throw new DeliveryError("rider_inactive");
+
+    const { rows: orderRows } = await client.query(`SELECT * FROM orders WHERE id = $1 FOR UPDATE`, [orderId]);
+    const order = orderRows[0];
+    if (!order) throw new DeliveryError("order_not_found");
+    if (!["assigned", "out_for_delivery"].includes(order.status)) throw new DeliveryError("not_assigned_status", { status: order.status });
+    if (order.rider_id === newRiderId) throw new DeliveryError("same_rider");
+
+    await client.query(`UPDATE orders SET rider_id = $1, updated_at = now() WHERE id = $2`, [newRiderId, orderId]);
+    await client.query(
+      `INSERT INTO order_reassignments (order_id, old_rider_id, new_rider_id, note, actor_user_id) VALUES ($1,$2,$3,$4,$5)`,
+      [orderId, order.rider_id, newRiderId, note, actorUserId]
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function listRiderOrders(riderId: string) {
   const { rows } = await requirePool().query(
     `SELECT id, order_number, status, customer_name, customer_phone, delivery_address, delivery_pincode,

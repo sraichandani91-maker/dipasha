@@ -6,12 +6,16 @@ import {
   createOrder, getOrder, listPendingOrders, listActiveOrders, addOrderLine, resolveOrderLine,
   addOrderImage, getOrderImageFilePath, logOrderImageView, addOrderMessage, findSubstitutesForProduct, sendQuote,
   recordCustomerConfirmed, recordCustomerDeclined, verifyPrescription, OrderError,
+  listAllOrders, addCatalogLineToOrder, removeOrderLine, cancelOrder, ORDER_CANCEL_REASON_CODES,
+  initiateRefund, listOrderRefunds,
 } from "../repo/orders.js";
 import {
   startPicking, confirmPickLine, markPickLineShort, applySubstituteForShortfall, completePicking,
   packScan, completePacking, PickingError,
 } from "../repo/order-picking.js";
+import { reassignRider, DeliveryError } from "../repo/delivery.js";
 import { WEB_MANUAL_REASON_CODES } from "../repo/manual-overrides.js";
+import { toCsv } from "../lib/csv.js";
 
 const CONTENT_TYPE_BY_EXT: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
 
@@ -442,6 +446,126 @@ export default async function orderRoutes(app: FastifyInstance) {
         if (err instanceof PickingError) return reply.code(409).send({ error: err.code, details: err.details });
         throw err;
       }
+    }
+  );
+
+  // Section 10.2: "Full order list with every timestamp, filterable and
+  // exportable."
+  app.get(
+    "/orders",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const q = req.query as { status?: string; from?: string; to?: string; search?: string; format?: string };
+      const rows = await listAllOrders({ status: q.status, from: q.from, to: q.to, search: q.search });
+      if (q.format === "csv") {
+        return reply
+          .header("Content-Type", "text/csv")
+          .header("Content-Disposition", `attachment; filename="orders.csv"`)
+          .send(toCsv(rows));
+      }
+      reply.send(rows);
+    }
+  );
+
+  // Section 10.2: "Edit an order pre-pick: add or remove lines..."
+  // (change quantity / apply substitution reuse the existing
+  // /orders/:id/lines/:lineId/resolve route above — see repo/orders.ts).
+  // A distinct path from the existing /orders/:id/lines (which adds an
+  // *unstructured* free-text/image line for review, Section 7A.3) —
+  // this one adds an already-resolved catalog line directly, only once
+  // an order is past review and sitting pre-pick.
+  app.post(
+    "/orders/:id/catalog-lines",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      const body = catalogLineSchema.safeParse(req.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
+      try {
+        reply.code(201).send(await addCatalogLineToOrder(params.data.id, body.data.productId, body.data.quantityRequestedUnits));
+      } catch (err) {
+        if (err instanceof OrderError) return reply.code(409).send({ error: err.code, details: err.details });
+        throw err;
+      }
+    }
+  );
+
+  app.delete(
+    "/orders/:id/lines/:lineId",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid(), lineId: z.string().uuid() }).safeParse(req.params);
+      if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+      try {
+        await removeOrderLine(params.data.id, params.data.lineId);
+        reply.send({ removed: true });
+      } catch (err) {
+        if (err instanceof OrderError) return reply.code(409).send({ error: err.code, details: err.details });
+        throw err;
+      }
+    }
+  );
+
+  // Section 10.2: "Cancel an order with reason code, with automatic
+  // stock reversal."
+  app.post(
+    "/orders/:id/cancel",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      const body = z
+        .object({ reasonCode: z.enum(ORDER_CANCEL_REASON_CODES), note: z.string().min(1), deviceId: z.string().min(1) })
+        .safeParse(req.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
+      try {
+        await cancelOrder(params.data.id, { ...body.data, actorUserId: req.auth!.sub });
+        reply.send({ cancelled: true });
+      } catch (err) {
+        if (err instanceof OrderError) return reply.code(409).send({ error: err.code, details: err.details });
+        throw err;
+      }
+    }
+  );
+
+  // Section 10.2: "Force-reassign an order to a different rider."
+  app.post(
+    "/orders/:id/reassign-rider",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      const body = z.object({ riderId: z.string().uuid(), note: z.string().min(1) }).safeParse(req.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
+      try {
+        await reassignRider(params.data.id, body.data.riderId, body.data.note, req.auth!.sub);
+        reply.send({ reassigned: true });
+      } catch (err) {
+        if (err instanceof DeliveryError) return reply.code(409).send({ error: err.code, details: err.details });
+        throw err;
+      }
+    }
+  );
+
+  // Section 10.2: "Refund initiation (stubbed until the payment gateway
+  // is live)."
+  app.post(
+    "/orders/:id/refunds",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      const body = z.object({ amount: z.number().positive(), reason: z.string().min(1) }).safeParse(req.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
+      const result = await initiateRefund(params.data.id, { ...body.data, requestedBy: req.auth!.sub });
+      reply.code(201).send(result);
+    }
+  );
+
+  app.get(
+    "/orders/:id/refunds",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+      reply.send(await listOrderRefunds(params.data.id));
     }
   );
 }
