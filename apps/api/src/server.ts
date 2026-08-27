@@ -31,6 +31,7 @@ import notificationRoutes from "./routes/notifications.js";
 import purchaseScanRoutes from "./routes/purchase-scans.js";
 import orderRoutes from "./routes/orders.js";
 import deliveryRoutes from "./routes/delivery.js";
+import syncRoutes from "./routes/sync.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -73,6 +74,7 @@ export function buildServer(): FastifyInstance {
   app.register(purchaseScanRoutes);
   app.register(orderRoutes);
   app.register(deliveryRoutes);
+  app.register(syncRoutes);
 
   app.get("/health", async (_req, reply) => {
     const dbOk = await pingDatabase().catch(() => false);

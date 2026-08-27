@@ -49,6 +49,21 @@ export interface CreateSaleInput {
   fulfillsRequestId: string | null; // Section 6B.4: links the bill back to the request for a true conversion rate
   createdBy: string;
   deviceId: string;
+  // Section 6A.9 offline sync (M12): a bill created while offline was
+  // already numbered from the device's own pre-reserved block and shown
+  // to the customer on the printed receipt at the time — replaying it
+  // through reserveNumber() at sync time would both waste a second
+  // number and print a different one than the customer already has.
+  // Only ever set by the sync-replay path, never by POS's live call.
+  preAssignedBillNumber?: string;
+  // Same reasoning for the timestamp: an offline sale happened when the
+  // biller completed it, not whenever the device eventually reconnects
+  // — business_date (and day-close, and every report keyed on it) needs
+  // to reflect that real moment.
+  occurredAt?: string;
+  // Lets a retried sync of the same queued sale be a safe no-op instead
+  // of a duplicate sale — checked before any work happens.
+  idempotencyKey?: string;
   source: "app" | "web" | "web_manual";
 }
 
@@ -80,6 +95,15 @@ export async function createSale(input: CreateSaleInput) {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+
+    if (input.idempotencyKey) {
+      const { rows: existing } = await client.query(`SELECT id, bill_number, created_at, customer_name, customer_phone, taxable_value, tax_total, grand_total, change_due FROM sales WHERE idempotency_key = $1`, [input.idempotencyKey]);
+      if (existing[0]) {
+        await client.query("COMMIT");
+        const s = existing[0];
+        return { id: s.id, billNumber: s.bill_number, createdAt: s.created_at, customerPhone: s.customer_phone, taxableValueTotal: Number(s.taxable_value), taxTotal: Number(s.tax_total), grandTotal: Number(s.grand_total), changeDue: Number(s.change_due) };
+      }
+    }
 
     if (input.fulfillsRequestId) {
       await client.query(
@@ -237,19 +261,24 @@ export async function createSale(input: CreateSaleInput) {
       customer = await findOrCreateCustomer(input.customerName ?? "Walk-in", input.customerPhone);
     }
 
-    const seriesPrefix = await billSeriesPrefix(input.channel);
-    const billNumber = await reserveNumber(client, seriesPrefix);
+    let billNumber = input.preAssignedBillNumber;
+    if (!billNumber) {
+      const seriesPrefix = await billSeriesPrefix(input.channel);
+      billNumber = await reserveNumber(client, seriesPrefix);
+    }
 
     const { rows: saleRows } = await client.query(
       `INSERT INTO sales
          (bill_number, channel, customer_id, customer_name, customer_phone, taxable_value, bill_discount_value,
-          tax_total, round_off, grand_total, amount_tendered, change_due, source, created_by, device_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          tax_total, round_off, grand_total, amount_tendered, change_due, source, created_by, device_id,
+          idempotency_key, created_at, business_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+         COALESCE($17::timestamptz, now()), COALESCE($17::timestamptz, now())::date)
        RETURNING id, bill_number, created_at, customer_name, customer_phone`,
       [
         billNumber, input.channel, customer?.id ?? null, customer?.name ?? null, customer?.phone ?? input.customerPhone ?? null,
         round2(taxableValueTotal), input.billDiscountValue, round2(taxTotal), input.roundOff, grandTotal, tenderTotal, changeDue,
-        input.source, input.createdBy, input.deviceId,
+        input.source, input.createdBy, input.deviceId, input.idempotencyKey ?? null, input.occurredAt ?? null,
       ]
     );
     const sale = saleRows[0];
