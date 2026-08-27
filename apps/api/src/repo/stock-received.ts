@@ -79,3 +79,40 @@ export async function createStockReceived(input: CreateStockReceivedInput) {
     client.release();
   }
 }
+
+// --- List (Section 10.2: create-only until now, same gap as purchase
+// invoices). Each row is a single movement_ledger entry — there's no
+// header/lines split to edit here the way a GST invoice has, so unlike
+// purchase invoices this has no separate correction path: a wrong
+// quantity or MRP is already fixable through the Inventory screen's
+// existing batch-correction tools (M13.3), which apply identically
+// regardless of how the batch first arrived. ---
+
+export interface StockReceivedListFilter {
+  from?: string;
+  to?: string;
+  search?: string;
+}
+
+export async function listStockReceived(filter: StockReceivedListFilter) {
+  const db = requirePool();
+  const where: string[] = [`ml.movement_type = 'stock_received'`];
+  const params: unknown[] = [];
+  if (filter.from) { params.push(filter.from); where.push(`ml.created_at >= $${params.length}`); }
+  if (filter.to) { params.push(`${filter.to} 23:59:59`); where.push(`ml.created_at <= $${params.length}`); }
+  if (filter.search) { params.push(`%${filter.search}%`); where.push(`(p.name ILIKE $${params.length} OR b.batch_no ILIKE $${params.length})`); }
+
+  const { rows } = await db.query(
+    `SELECT ml.id, ml.created_at, ml.quantity_delta, ml.reason_code, ml.note, ml.source,
+            p.name AS product_name, b.batch_no, b.expiry_date, b.mrp, u.name AS created_by_name
+     FROM movement_ledger ml
+     JOIN products p ON p.id = ml.product_id
+     JOIN batches b ON b.id = ml.batch_id
+     JOIN users u ON u.id = ml.actor_user_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY ml.created_at DESC
+     LIMIT 1000`,
+    params
+  );
+  return rows;
+}

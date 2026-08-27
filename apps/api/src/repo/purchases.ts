@@ -275,3 +275,144 @@ export async function createPurchaseInvoice(input: CreatePurchaseInvoiceInput) {
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+// --- List / detail (Section 10.2: create-only until now — there was no
+// way to look a submitted invoice back up except querying the DB directly) ---
+
+export interface PurchaseInvoiceListFilter {
+  vendorId?: string;
+  from?: string;
+  to?: string;
+  search?: string; // invoice number
+}
+
+export async function listPurchaseInvoices(filter: PurchaseInvoiceListFilter) {
+  const db = requirePool();
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (filter.vendorId) { params.push(filter.vendorId); where.push(`pi.vendor_id = $${params.length}`); }
+  if (filter.from) { params.push(filter.from); where.push(`pi.invoice_date >= $${params.length}`); }
+  if (filter.to) { params.push(filter.to); where.push(`pi.invoice_date <= $${params.length}`); }
+  if (filter.search) { params.push(`%${filter.search}%`); where.push(`pi.invoice_number ILIKE $${params.length}`); }
+
+  const { rows } = await db.query(
+    `SELECT pi.id, pi.invoice_number, pi.invoice_date, pi.invoice_value_stated, pi.net_payable_computed,
+            pi.reconciliation_diff, pi.reconciliation_acknowledged, pi.entry_method, pi.created_at,
+            v.name AS vendor_name,
+            (SELECT COUNT(*) FROM purchase_invoice_lines pil WHERE pil.purchase_invoice_id = pi.id) AS line_count,
+            (SELECT COUNT(*) FROM purchase_invoice_documents d WHERE d.purchase_invoice_id = pi.id) AS document_count
+     FROM purchase_invoices pi
+     JOIN vendors v ON v.id = pi.vendor_id
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     ORDER BY pi.invoice_date DESC, pi.created_at DESC
+     LIMIT 1000`,
+    params
+  );
+  return rows;
+}
+
+export async function getPurchaseInvoiceDetail(id: string) {
+  const db = requirePool();
+  const { rows: invRows } = await db.query(
+    `SELECT pi.*, v.name AS vendor_name, v.gstin AS vendor_gstin
+     FROM purchase_invoices pi JOIN vendors v ON v.id = pi.vendor_id
+     WHERE pi.id = $1`,
+    [id]
+  );
+  if (!invRows[0]) return null;
+
+  const { rows: lines } = await db.query(
+    `SELECT pil.*, p.name AS product_name, b.batch_no, b.expiry_date
+     FROM purchase_invoice_lines pil
+     JOIN products p ON p.id = pil.product_id
+     JOIN batches b ON b.id = pil.batch_id
+     WHERE pil.purchase_invoice_id = $1
+     ORDER BY p.name`,
+    [id]
+  );
+
+  const { rows: documents } = await db.query(
+    `SELECT d.id, d.mime_type, d.created_at, u.name AS uploaded_by_name
+     FROM purchase_invoice_documents d JOIN users u ON u.id = d.uploaded_by
+     WHERE d.purchase_invoice_id = $1 ORDER BY d.created_at`,
+    [id]
+  );
+
+  const { rows: corrections } = await db.query(
+    `SELECT c.field, c.old_value, c.new_value, c.reason_code, c.note, c.created_at, u.name AS actor_name
+     FROM purchase_invoice_corrections c JOIN users u ON u.id = c.actor_user_id
+     WHERE c.purchase_invoice_id = $1 ORDER BY c.created_at DESC`,
+    [id]
+  );
+
+  return { invoice: invRows[0], lines, documents, corrections };
+}
+
+// --- Edit inbound records: header/identification fields only. Never
+// quantity, rate, or GST — those already feed posted movement_ledger
+// rows and batch cost data (see DECISIONS.md for why that line is
+// drawn here, same reasoning as M13.3's batch_corrections split). ---
+
+export const PURCHASE_INVOICE_CORRECTION_FIELDS = ["invoice_number", "invoice_date", "vendor_id", "payment_terms_days"] as const;
+export type PurchaseInvoiceCorrectionField = (typeof PURCHASE_INVOICE_CORRECTION_FIELDS)[number];
+export const PURCHASE_INVOICE_CORRECTION_REASON_CODES = ["data_entry_correction", "wrong_vendor_selected", "wrong_invoice_number", "other"] as const;
+export type PurchaseInvoiceCorrectionReasonCode = (typeof PURCHASE_INVOICE_CORRECTION_REASON_CODES)[number];
+
+export interface CorrectPurchaseInvoiceFieldInput {
+  invoiceId: string;
+  field: PurchaseInvoiceCorrectionField;
+  newValue: string;
+  reasonCode: PurchaseInvoiceCorrectionReasonCode;
+  note: string;
+  actorUserId: string;
+  deviceId: string;
+}
+
+export async function correctPurchaseInvoiceField(input: CorrectPurchaseInvoiceFieldInput): Promise<void> {
+  const db = requirePool();
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`SELECT ${input.field} AS current_value FROM purchase_invoices WHERE id = $1 FOR UPDATE`, [input.invoiceId]);
+    if (!rows[0]) throw new ValidationConflictError("invoice_not_found", null);
+    const oldValue = String(rows[0].current_value);
+
+    if (input.field === "vendor_id") {
+      const vendor = await getVendor(input.newValue);
+      if (!vendor) throw new ValidationConflictError("vendor_not_found", null);
+    }
+
+    await client.query(`UPDATE purchase_invoices SET ${input.field} = $1 WHERE id = $2`, [input.newValue, input.invoiceId]);
+    await client.query(
+      `INSERT INTO purchase_invoice_corrections (purchase_invoice_id, field, old_value, new_value, reason_code, note, actor_user_id, device_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [input.invoiceId, input.field, oldValue, input.newValue, input.reasonCode, input.note, input.actorUserId, input.deviceId]
+    );
+    await client.query("COMMIT");
+  } catch (err: any) {
+    await client.query("ROLLBACK");
+    if (err?.code === "23505") throw new ValidationConflictError("duplicate_invoice", null);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// --- Invoice document upload: scanned/photographed evidence attached to
+// an already-created record, for the ordinary manual-entry path where
+// nothing was ever photographed at capture time (Section 6.3's AI-scan
+// path already keeps its own page images). ---
+
+export async function addPurchaseInvoiceDocument(invoiceId: string, filePath: string, mimeType: string, uploadedBy: string): Promise<{ id: string }> {
+  const { rows } = await requirePool().query(
+    `INSERT INTO purchase_invoice_documents (purchase_invoice_id, file_path, mime_type, uploaded_by)
+     VALUES ($1,$2,$3,$4) RETURNING id`,
+    [invoiceId, filePath, mimeType, uploadedBy]
+  );
+  return { id: rows[0].id };
+}
+
+export async function getPurchaseInvoiceDocument(id: string): Promise<{ filePath: string; mimeType: string } | null> {
+  const { rows } = await requirePool().query(`SELECT file_path, mime_type FROM purchase_invoice_documents WHERE id = $1`, [id]);
+  return rows[0] ? { filePath: rows[0].file_path, mimeType: rows[0].mime_type } : null;
+}

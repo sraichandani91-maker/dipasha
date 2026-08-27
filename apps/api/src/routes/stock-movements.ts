@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { createStockReceived } from "../repo/stock-received.js";
+import { createStockReceived, listStockReceived } from "../repo/stock-received.js";
 
 const REASON_CODES = ["free_sample", "scheme_goods", "opening_stock", "replacement_no_invoice", "transfer_in", "found_in_count", "other"] as const;
 
@@ -39,6 +39,17 @@ export default async function stockMovementRoutes(app: FastifyInstance) {
         source: "web",
       });
       reply.code(201).send(result);
+    }
+  );
+
+  // Section 10.2: list — create-only until now, same gap as purchase invoices.
+  app.get(
+    "/stock-movements/stock-received",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const filter = z.object({ from: z.string().optional(), to: z.string().optional(), search: z.string().optional() }).safeParse(req.query);
+      if (!filter.success) return reply.code(400).send({ error: "invalid_query" });
+      reply.send(await listStockReceived(filter.data));
     }
   );
 }
