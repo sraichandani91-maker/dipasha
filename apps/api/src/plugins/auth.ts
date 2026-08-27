@@ -1,7 +1,7 @@
 import fp from "fastify-plugin";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { verifyToken, type TokenClaims } from "../auth/jwt.js";
-import type { UserRole } from "../repo/users.js";
+import { getUserOverrideKeys, type UserRole } from "../repo/users.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -42,9 +42,19 @@ export default fp(async (app) => {
       if (!req.auth) {
         return reply.code(401).send({ error: "missing_token" });
       }
-      if (!roles.includes(req.auth.role)) {
-        return reply.code(403).send({ error: "forbidden", requiredRole: roles });
+      if (roles.includes(req.auth.role)) return;
+      // Section 10.2 "Per-user permission overrides above the base
+      // role" — checked only on the way to a 403, so the common case
+      // (role already matches) never pays for the extra query. An
+      // impersonated session (Section 3) is deliberately excluded: an
+      // override belongs to the real account, and impersonation already
+      // has its own, separate role-swap mechanism — stacking the two
+      // would make "what can this session actually do" unauditable.
+      if (!req.auth.impersonating) {
+        const overrides = await getUserOverrideKeys(req.auth.sub);
+        if (roles.some((r) => overrides.includes(r))) return;
       }
+      return reply.code(403).send({ error: "forbidden", requiredRole: roles });
     };
   });
 });

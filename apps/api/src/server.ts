@@ -3,7 +3,9 @@ import multipart from "@fastify/multipart";
 import { config } from "./config.js";
 import { pingDatabase } from "./db.js";
 import authPlugin from "./plugins/auth.js";
+import activityLogPlugin from "./plugins/activity-log.js";
 import authRoutes from "./routes/auth.js";
+import userRoutes from "./routes/users.js";
 import productRoutes from "./routes/products.js";
 import saltRoutes from "./routes/salts.js";
 import binRoutes from "./routes/bins.js";
@@ -46,7 +48,9 @@ export function buildServer(): FastifyInstance {
 
   app.register(multipart, { limits: { fileSize: config.maxUploadBytes } });
   app.register(authPlugin);
+  app.register(activityLogPlugin);
   app.register(authRoutes);
+  app.register(userRoutes);
   app.register(productRoutes);
   app.register(saltRoutes);
   app.register(binRoutes);

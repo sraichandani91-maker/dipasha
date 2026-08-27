@@ -13,3 +13,4 @@ coverage/
 pgdata/
 caddy_data/
 caddy_config/
+apps/api/uploads/
