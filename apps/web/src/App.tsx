@@ -25,12 +25,13 @@ import DeliveryOrdersPage from "./pages/DeliveryOrdersPage.js";
 import PickPackPage from "./pages/PickPackPage.js";
 import RiderPage from "./pages/RiderPage.js";
 import StaffPage from "./pages/StaffPage.js";
+import InventoryPage from "./pages/InventoryPage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
   | "cycle-counts" | "expiry-audit" | "write-offs" | "reports"
   | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
-  | "delivery-orders" | "pick-pack" | "rider" | "staff";
+  | "delivery-orders" | "pick-pack" | "rider" | "staff" | "inventory";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -66,6 +67,9 @@ export default function App() {
           )}
           <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}>Products</button>
           <button className={tab === "bins" ? "active" : ""} onClick={() => setTab("bins")}>Bins</button>
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}>Inventory</button>
+          )}
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "purchases" ? "active" : ""} onClick={() => setTab("purchases")}>Purchase entry</button>
           )}
@@ -142,6 +146,7 @@ export default function App() {
             {tab === "pos" && <PosPage fulfillRequest={fulfillRequest} onConsumeFulfillRequest={() => setFulfillRequest(null)} />}
             {tab === "products" && <ProductsPage />}
             {tab === "bins" && <BinsPage />}
+            {tab === "inventory" && <InventoryPage />}
             {tab === "purchases" && <PurchaseEntryPage />}
             {tab === "stock-received" && <StockReceivedPage />}
             {tab === "putaway" && <PutAwayPage />}
