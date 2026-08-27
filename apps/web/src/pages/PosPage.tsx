@@ -5,6 +5,11 @@ import SearchBar from "../components/SearchBar.js";
 import QuantityInput from "../components/QuantityInput.js";
 import RequestFormModal from "../components/RequestFormModal.js";
 import { buildReceiptHtml } from "../lib/receipt.js";
+import { useOfflineSync } from "../offline/useOfflineSync.js";
+import {
+  refreshPosSnapshot, refillBillNumberPool, poolSize, getSnapshotMeta, queueOfflineSale,
+  searchSnapshotProducts, buildOfflineReceiptHtml, type SnapshotProduct, type QueuedOfflineSale,
+} from "../offline/pos-offline.js";
 
 interface Line {
   key: number;
@@ -82,8 +87,23 @@ export default function PosPage({
   const [whatsappStatus, setWhatsappStatus] = useState<string | null>(null);
   const [whatsappBusy, setWhatsappBusy] = useState(false);
   const [requestModalProduct, setRequestModalProduct] = useState<{ id: string; name: string } | null>(null);
+  const offline = useOfflineSync();
 
   useEffect(() => { api.get("/held-bills").then(setHeld).catch(() => {}); }, []);
+
+  // Section 6A.9: "POS must bill fully offline against the local
+  // cache." Refreshed opportunistically whenever the tab is online —
+  // this is the same "works while the tab is open" honesty as every
+  // other browser-only capability in this build (M5's alarm, M11's GPS
+  // pings) since there's no background sync without a native app.
+  useEffect(() => {
+    if (!offline.isOnline) return;
+    refreshPosSnapshot().catch(() => {});
+    poolSize().then((n) => {
+      if (n < 2) refillBillNumberPool("web-console").catch(() => {});
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offline.isOnline]);
 
   function addLine(p: any): number {
     const key = keySeq++;
@@ -212,7 +232,48 @@ export default function PosPage({
   const totalRevenueForKnownCost = costKnownLines.reduce((a, p) => a + p.taxable, 0);
   const blendedMarginPercent = totalRevenueForKnownCost > 0 ? ((totalRevenueForKnownCost - totalCost) / totalRevenueForKnownCost) * 100 : null;
 
+  // Section 6A.9: POS bills fully offline against the local cache when
+  // there's no connection — same lines/tenders shape, just resolved
+  // against the cached snapshot instead of a live call, and queued for
+  // /sync/sales to replay on reconnect. Schedule H/H1 prescriber capture
+  // isn't wired into this path yet (a disclosed simplification, see
+  // DECISIONS.md) — an offline H/H1 sale still queues and syncs, just
+  // without prescriber details.
+  async function completeSaleOffline() {
+    setBusy(true);
+    setError(null);
+    try {
+      const tenders = [{ tenderType, amount: tenderType === "cash" ? Number(cashTendered || grandTotal) : grandTotal, referenceNumber: null }];
+      const sale = await queueOfflineSale({
+        customerName: customerName || null,
+        customerPhone: customerPhone || null,
+        lines: lines.map((l) => {
+          const preview = computeLinePreview(l);
+          return { productId: l.productId, quantityBaseUnits: l.quantityBaseUnits, discountValue: preview.discountValue };
+        }),
+        billDiscountValue,
+        roundOff,
+        tenders,
+        deviceId: "web-console",
+      });
+      setCompletedBill({ billNumber: sale.preAssignedBillNumber, grandTotal: sale.grandTotalEstimate, changeDue: 0, customerPhone: sale.customerPhone, queuedOffline: true, offlineSale: sale });
+      setWhatsappStatus(null);
+      setLines([]);
+      setCustomerName(""); setCustomerPhone(""); setBillDiscountValue(0); setRoundOff(0);
+      setCashTendered(""); setPrescriberId(null); setPrescriberName(""); setPrescriberReg(""); setPatientName(""); setPatientContact("");
+      setFulfillsRequestId(null); setFulfillNote(null); setCreditBalance(null);
+      await offline.refreshPendingCount();
+    } catch (err) {
+      if (err instanceof Error && err.message === "insufficient_stock_offline") setError("Not enough stock in the offline cache for this item.");
+      else if (err instanceof Error && err.message === "no_offline_bill_numbers_reserved") setError("No offline bill numbers available — reconnect briefly to reserve a block before going offline.");
+      else setError("Could not complete the sale offline.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function completeSale() {
+    if (!offline.isOnline) return completeSaleOffline();
     setBusy(true);
     setError(null);
     try {
@@ -269,7 +330,7 @@ export default function PosPage({
   }
 
   async function sendWhatsApp() {
-    if (!completedBill) return;
+    if (!completedBill || completedBill.queuedOffline) return;
     setWhatsappBusy(true);
     setWhatsappStatus(null);
     try {
@@ -292,11 +353,15 @@ export default function PosPage({
 
   async function printReceipt() {
     if (!completedBill) return;
-    await api.post(`/sales/${completedBill.id}/mark-printed`).catch(() => {});
-    const detail = await api.get(`/sales/${completedBill.id}`);
     const w = window.open("", "_blank", "width=380,height=600");
     if (!w) return;
-    w.document.write(buildReceiptHtml(detail));
+    if (completedBill.queuedOffline) {
+      w.document.write(buildOfflineReceiptHtml(completedBill.offlineSale as QueuedOfflineSale));
+    } else {
+      await api.post(`/sales/${completedBill.id}/mark-printed`).catch(() => {});
+      const detail = await api.get(`/sales/${completedBill.id}`);
+      w.document.write(buildReceiptHtml(detail));
+    }
     w.document.close();
     w.focus();
     w.print();
@@ -306,17 +371,22 @@ export default function PosPage({
     <div style={{ display: "flex", gap: 16 }}>
       <div style={{ flex: 2 }}>
         <h2 style={{ marginTop: 0 }}>Counter billing</h2>
+        <OfflineBanner offline={offline} />
 
         {completedBill && (
-          <div className="card" style={{ background: "color-mix(in srgb, var(--status-good) 10%, white)", marginBottom: 16 }}>
+          <div className="card" style={{ background: completedBill.queuedOffline ? "color-mix(in srgb, var(--status-warn, orange) 12%, white)" : "color-mix(in srgb, var(--status-good) 10%, white)", marginBottom: 16 }}>
+            {completedBill.queuedOffline && <p style={{ margin: "0 0 4px", fontWeight: 700 }}>Queued offline — will sync when reconnected</p>}
             <p style={{ margin: 0, fontWeight: 700 }}>Bill {completedBill.billNumber} completed — ₹{completedBill.grandTotal}</p>
             {completedBill.changeDue > 0 && <p style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 700 }}>Change due: ₹{completedBill.changeDue}</p>}
             <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
               <button className="btn-primary" onClick={printReceipt}>Print receipt</button>
-              <button className="btn-secondary" disabled={whatsappBusy || !completedBill.customerPhone} onClick={sendWhatsApp}>
-                {whatsappBusy ? "Sending…" : "Send via WhatsApp"}
-              </button>
-              {!completedBill.customerPhone && <span className="hint-text">No customer phone on this bill</span>}
+              {!completedBill.queuedOffline && (
+                <button className="btn-secondary" disabled={whatsappBusy || !completedBill.customerPhone} onClick={sendWhatsApp}>
+                  {whatsappBusy ? "Sending…" : "Send via WhatsApp"}
+                </button>
+              )}
+              {completedBill.queuedOffline && <span className="hint-text">WhatsApp send will be available once this bill syncs</span>}
+              {!completedBill.queuedOffline && !completedBill.customerPhone && <span className="hint-text">No customer phone on this bill</span>}
             </div>
             {whatsappStatus && <p className="hint-text" style={{ marginTop: 6 }}>{whatsappStatus}</p>}
           </div>
@@ -335,7 +405,11 @@ export default function PosPage({
           <button className="btn-secondary" onClick={() => setShowSearch((s) => !s)}>{showSearch ? "Hide" : "+ Add item"} search</button>
           {showSearch && (
             <div style={{ marginTop: 10 }}>
-              <SearchBar context="pos" onSelect={addLine} onRequestBook={(p) => setRequestModalProduct({ id: p.id, name: p.name })} autoFocus />
+              {offline.isOnline ? (
+                <SearchBar context="pos" onSelect={addLine} onRequestBook={(p) => setRequestModalProduct({ id: p.id, name: p.name })} autoFocus />
+              ) : (
+                <OfflineProductPicker onSelect={addLine} />
+              )}
             </div>
           )}
         </div>
@@ -498,6 +572,72 @@ export default function PosPage({
           <button className="btn-secondary" style={{ width: "100%", marginTop: 8 }} disabled={lines.length === 0} onClick={holdBill}>Hold bill</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Section 6A.9 / Section 11 offline mode. `isOnline` is the honest
+// signal a web tab actually has (browser online/offline events); real
+// pending-sale count and last-sync outcome come from the local outbox,
+// not guessed.
+function OfflineBanner({ offline }: { offline: ReturnType<typeof useOfflineSync> }) {
+  const [snapshotAge, setSnapshotAge] = useState<string | null>(null);
+  useEffect(() => {
+    getSnapshotMeta().then((meta) => setSnapshotAge(meta ? new Date(meta.refreshedAt).toLocaleString("en-IN") : null));
+  }, [offline.isOnline]);
+
+  if (offline.isOnline && offline.pendingCount === 0) return null;
+
+  return (
+    <div className="card" style={{ background: offline.isOnline ? "color-mix(in srgb, var(--status-info) 10%, white)" : "color-mix(in srgb, var(--status-warn, orange) 12%, white)", marginBottom: 12 }}>
+      {!offline.isOnline && (
+        <p style={{ margin: 0, fontWeight: 700 }}>
+          Offline — billing against the cached catalogue{snapshotAge ? ` (last synced ${snapshotAge})` : ""}. Sales will queue and sync automatically once reconnected.
+        </p>
+      )}
+      {offline.pendingCount > 0 && (
+        <p style={{ margin: offline.isOnline ? 0 : "4px 0 0" }}>
+          {offline.pendingCount} sale{offline.pendingCount === 1 ? "" : "s"} queued, not yet synced.
+          {offline.isOnline && (
+            <button className="btn-secondary" style={{ marginLeft: 8 }} disabled={offline.syncing} onClick={() => offline.runSync()}>
+              {offline.syncing ? "Syncing…" : "Sync now"}
+            </button>
+          )}
+        </p>
+      )}
+      {offline.lastSync && offline.lastSync.conflictCount > 0 && (
+        <p className="hint-text" style={{ margin: "4px 0 0" }}>
+          {offline.lastSync.conflictCount} sale{offline.lastSync.conflictCount === 1 ? "" : "s"} could not sync as-is — see Sync conflicts on the Reports screen.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function OfflineProductPicker({ onSelect }: { onSelect: (p: any) => void }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SnapshotProduct[]>([]);
+
+  useEffect(() => {
+    if (!query.trim()) { setResults([]); return; }
+    searchSnapshotProducts(query).then(setResults);
+  }, [query]);
+
+  return (
+    <div>
+      <p className="hint-text" style={{ marginTop: 0 }}>Offline — searching the cached catalogue only.</p>
+      <input className="search-bar" placeholder="Search cached products…" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus style={{ width: "100%" }} />
+      {results.map((p) => {
+        const nearestBatch = [...p.batches].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate))[0];
+        const stock = p.batches.reduce((sum, b) => sum + b.quantityBaseUnits, 0);
+        return (
+          <div key={p.id} className="card offline-product-result" style={{ marginTop: 6, cursor: "pointer" }} onClick={() => onSelect({ id: p.id, name: p.name, manufacturer: p.manufacturer, packSize: p.packSize, baseUnit: p.baseUnit, mrp: nearestBatch?.mrp ?? 0, scheduleCategory: p.scheduleCategory, isColdChain: false })}>
+            <strong>{p.name}</strong> — {p.manufacturer}
+            <div className="hint-text">Stock (cached): {stock} {p.baseUnit}(s) · MRP ₹{nearestBatch?.mrp?.toFixed(2) ?? "—"}</div>
+          </div>
+        );
+      })}
+      {query.trim() && results.length === 0 && <p className="hint-text">No match in the cached catalogue.</p>}
     </div>
   );
 }

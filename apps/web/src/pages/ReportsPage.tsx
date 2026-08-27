@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, downloadFile } from "../api.js";
 
-type Tab = "registers" | "gstr1" | "gstr3b" | "traceability" | "inventory" | "exceptions";
+type Tab = "registers" | "gstr1" | "gstr3b" | "traceability" | "inventory" | "exceptions" | "sync-conflicts";
 
 function defaultRange() {
   const now = new Date();
@@ -32,12 +32,13 @@ export default function ReportsPage() {
         {([
           ["registers", "Registers"], ["gstr1", "GSTR-1"], ["gstr3b", "GSTR-3B"],
           ["traceability", "Batch traceability"], ["inventory", "Location-wise inventory"], ["exceptions", "Negative stock"],
+          ["sync-conflicts", "Sync conflicts"],
         ] as Array<[Tab, string]>).map(([key, label]) => (
           <button key={key} className={tab === key ? "btn-primary" : "btn-secondary"} onClick={() => setTab(key)}>{label}</button>
         ))}
       </div>
 
-      {tab !== "traceability" && tab !== "inventory" && tab !== "exceptions" && (
+      {tab !== "traceability" && tab !== "inventory" && tab !== "exceptions" && tab !== "sync-conflicts" && (
         <div className="card" style={{ marginBottom: 12, display: "flex", gap: 12, alignItems: "flex-end" }}>
           <div className="field"><label>From</label><input type="date" value={range.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} /></div>
           <div className="field"><label>To</label><input type="date" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} /></div>
@@ -50,6 +51,62 @@ export default function ReportsPage() {
       {tab === "traceability" && <TraceabilityTab />}
       {tab === "inventory" && <InventoryTab />}
       {tab === "exceptions" && <ExceptionsTab />}
+      {tab === "sync-conflicts" && <SyncConflictsTab />}
+    </div>
+  );
+}
+
+// Section 6A.9 / Section 11: "any conflict escalated to the Owner rather
+// than silently resolved." A queued offline sale that couldn't replay
+// (most often stock moved while the device was offline) lands here,
+// durable on the server regardless of which device raised it.
+function SyncConflictsTab() {
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"open" | "resolved" | "">("open");
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+
+  async function load() {
+    setRows(await api.get(`/sync-conflicts${statusFilter ? `?status=${statusFilter}` : ""}`));
+  }
+
+  async function resolve(id: string) {
+    if (!note.trim()) return;
+    await api.post(`/sync-conflicts/${id}/resolve`, { resolutionNote: note });
+    setResolvingId(null);
+    setNote("");
+    await load();
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}>
+          <option value="open">Open</option>
+          <option value="resolved">Resolved</option>
+          <option value="">All</option>
+        </select>
+        <button className="btn-primary" onClick={load}>Load</button>
+      </div>
+      {rows && rows.length === 0 && <div className="card" style={{ background: "color-mix(in srgb, var(--status-good) 10%, white)" }}><p style={{ margin: 0 }}>Nothing here.</p></div>}
+      {rows && rows.map((r) => (
+        <div key={r.id} className="card" style={{ marginBottom: 8 }}>
+          <p style={{ margin: 0 }}><strong>{r.conflict_type}</strong> · device {r.device_id} · raised by {r.raised_by_name} · {new Date(r.created_at).toLocaleString("en-IN")}</p>
+          <p className="hint-text" style={{ margin: "4px 0" }}>
+            {r.original_payload?.customerName ?? "Walk-in"} — bill {r.original_payload?.preAssignedBillNumber} · {JSON.stringify(r.error_details)}
+          </p>
+          {r.status === "resolved" && <p className="hint-text">Resolved: {r.resolution_note}</p>}
+          {r.status === "open" && resolvingId !== r.id && (
+            <button className="btn-secondary" onClick={() => setResolvingId(r.id)}>Resolve</button>
+          )}
+          {r.status === "open" && resolvingId === r.id && (
+            <div>
+              <input placeholder="How was this handled?" value={note} onChange={(e) => setNote(e.target.value)} style={{ width: 300 }} />
+              <button className="btn-primary" onClick={() => resolve(r.id)} style={{ marginLeft: 8 }}>Save</button>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
