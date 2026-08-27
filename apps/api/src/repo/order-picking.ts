@@ -5,6 +5,7 @@ import { sortByWalkPath, type WalkPathBin } from "../domain/walk-path.js";
 import { createSale, ValidationError as SaleValidationError, type SaleLineInput } from "./sales.js";
 import { enqueueNotification } from "../domain/notifications.js";
 import { findSubstitutesForProduct } from "./orders.js";
+import { recordManualOverride, type WebManualReasonCode } from "./manual-overrides.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -176,7 +177,16 @@ export async function applySubstituteForShortfall(orderId: string, originalPickL
   }
 }
 
-export async function completePicking(orderId: string) {
+// Section 10.1: "Confirming a pick against a batch" needs the web-manual
+// reason-code treatment — captured ONCE per order here, at the point
+// picking finishes, rather than on every individual line confirm (an
+// order can have a dozen-plus lines; repeating the same "why is this
+// manual" justification that many times would fight Section 6A.1's speed
+// targets for no real audit benefit over capturing it once per session).
+export async function completePicking(
+  orderId: string,
+  input: { actorUserId: string; deviceId: string; reasonCode: WebManualReasonCode; note: string }
+) {
   const db = requirePool();
   const { rows: unconfirmed } = await db.query(
     `SELECT id FROM order_pick_lines WHERE order_id = $1 AND scanned_confirmed = false`,
@@ -184,6 +194,15 @@ export async function completePicking(orderId: string) {
   );
   if (unconfirmed.length > 0) throw new PickingError("lines_not_confirmed", { count: unconfirmed.length });
   await db.query(`UPDATE orders SET status = 'picked', pick_completed_at = now(), updated_at = now() WHERE id = $1`, [orderId]);
+  await recordManualOverride({
+    action: "pick",
+    referenceType: "order",
+    referenceId: orderId,
+    reasonCode: input.reasonCode,
+    note: input.note,
+    actorUserId: input.actorUserId,
+    deviceId: input.deviceId,
+  });
 }
 
 // Section 7: "Scan each picked item at the packing bench against the
@@ -203,7 +222,12 @@ export async function packScan(pickLineId: string, scannedProductId: string) {
 // manual-batch-override path Section 6A.2 already defines for POS, so
 // the sale's batch/expiry data matches exactly what was scanned off the
 // shelf and at the packing bench, not a fresh FEFO guess.
-export async function completePacking(orderId: string, actorUserId: string, deviceId: string) {
+export async function completePacking(
+  orderId: string,
+  actorUserId: string,
+  deviceId: string,
+  override: { reasonCode: WebManualReasonCode; note: string }
+) {
   const db = requirePool();
   const { rows: orderRows } = await db.query(`SELECT * FROM orders WHERE id = $1`, [orderId]);
   const order = orderRows[0];
@@ -248,7 +272,12 @@ export async function completePacking(orderId: string, actorUserId: string, devi
       fulfillsRequestId: null,
       createdBy: actorUserId,
       deviceId,
-      source: "web",
+      // Section 10.1: "Packing verification" is one of the five listed
+      // scan-backed actions — since there's no separate scanning client
+      // yet (same reasoning as put-away, M3), the pack-time sale's
+      // stock-deducting ledger rows are tagged web_manual directly,
+      // exactly like put-away tags its own ledger row.
+      source: "web_manual",
     });
   } catch (err) {
     if (err instanceof SaleValidationError) throw new PickingError(`sale_${err.code}`, err.details);
@@ -260,6 +289,15 @@ export async function completePacking(orderId: string, actorUserId: string, devi
     `UPDATE orders SET status = $1, sale_id = $2, is_partial = $3, pack_completed_at = now(), updated_at = now() WHERE id = $4`,
     [newStatus, sale.id, isPartial, orderId]
   );
+  await recordManualOverride({
+    action: "pack",
+    referenceType: "order",
+    referenceId: orderId,
+    reasonCode: override.reasonCode,
+    note: override.note,
+    actorUserId,
+    deviceId,
+  });
 
   if (isPartial && order.customer_phone) {
     const client = await db.connect();

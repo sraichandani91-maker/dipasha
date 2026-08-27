@@ -6,6 +6,7 @@ import {
   listRiderCashReconciliations, DeliveryError,
 } from "../repo/delivery.js";
 import { listActiveRiders } from "../repo/users.js";
+import { WEB_MANUAL_REASON_CODES } from "../repo/manual-overrides.js";
 
 const gpsSchema = z.object({ lat: z.coerce.number(), lng: z.coerce.number() }).nullable().optional();
 const FAILURE_REASON_CODES = ["customer_unavailable", "wrong_address", "refused", "payment_failed", "rx_invalid"] as const;
@@ -41,10 +42,24 @@ export default async function deliveryRoutes(app: FastifyInstance) {
   });
 
   app.post("/rider/handover", { preHandler: [app.authenticate, app.requireRole("rider")] }, async (req, reply) => {
-    const body = z.object({ orderNumber: z.string().min(1), gps: gpsSchema }).safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ error: "invalid_body" });
+    const body = z
+      .object({
+        orderNumber: z.string().min(1),
+        gps: gpsSchema,
+        deviceId: z.string().min(1),
+        reasonCode: z.enum(WEB_MANUAL_REASON_CODES),
+        note: z.string().min(1),
+      })
+      .safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: "invalid_body", details: body.error.flatten() });
     try {
-      reply.send(await handoverScan(body.data.orderNumber, req.auth!.sub, body.data.gps ?? null));
+      reply.send(
+        await handoverScan(body.data.orderNumber, req.auth!.sub, body.data.gps ?? null, {
+          reasonCode: body.data.reasonCode,
+          note: body.data.note,
+          deviceId: body.data.deviceId,
+        })
+      );
     } catch (err) {
       if (err instanceof DeliveryError) return reply.code(409).send({ error: err.code, details: err.details });
       throw err;

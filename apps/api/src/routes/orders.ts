@@ -11,6 +11,7 @@ import {
   startPicking, confirmPickLine, markPickLineShort, applySubstituteForShortfall, completePicking,
   packScan, completePacking, PickingError,
 } from "../repo/order-picking.js";
+import { WEB_MANUAL_REASON_CODES } from "../repo/manual-overrides.js";
 
 const CONTENT_TYPE_BY_EXT: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
 
@@ -385,9 +386,17 @@ export default async function orderRoutes(app: FastifyInstance) {
     { preHandler: [app.authenticate, app.requireRole("owner", "store_manager", "picker_packer")] },
     async (req, reply) => {
       const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
-      if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+      const body = z
+        .object({ deviceId: z.string().min(1), reasonCode: z.enum(WEB_MANUAL_REASON_CODES), note: z.string().min(1) })
+        .safeParse(req.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body", details: (body as any).error?.flatten?.() });
       try {
-        await completePicking(params.data.id);
+        await completePicking(params.data.id, {
+          actorUserId: req.auth!.sub,
+          deviceId: body.data.deviceId,
+          reasonCode: body.data.reasonCode,
+          note: body.data.note,
+        });
         reply.send({ picked: true });
       } catch (err) {
         if (err instanceof PickingError) return reply.code(409).send({ error: err.code, details: err.details });
@@ -418,10 +427,17 @@ export default async function orderRoutes(app: FastifyInstance) {
     { preHandler: [app.authenticate, app.requireRole("owner", "store_manager", "picker_packer")] },
     async (req, reply) => {
       const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
-      const body = z.object({ deviceId: z.string().min(1) }).safeParse(req.body);
-      if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
+      const body = z
+        .object({ deviceId: z.string().min(1), reasonCode: z.enum(WEB_MANUAL_REASON_CODES), note: z.string().min(1) })
+        .safeParse(req.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body", details: (body as any).error?.flatten?.() });
       try {
-        reply.send(await completePacking(params.data.id, req.auth!.sub, body.data.deviceId));
+        reply.send(
+          await completePacking(params.data.id, req.auth!.sub, body.data.deviceId, {
+            reasonCode: body.data.reasonCode,
+            note: body.data.note,
+          })
+        );
       } catch (err) {
         if (err instanceof PickingError) return reply.code(409).send({ error: err.code, details: err.details });
         throw err;

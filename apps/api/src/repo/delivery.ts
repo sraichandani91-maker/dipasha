@@ -1,5 +1,6 @@
 import { pool } from "../db.js";
 import { enqueueNotification } from "../domain/notifications.js";
+import { recordManualOverride, type WebManualReasonCode } from "./manual-overrides.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -74,7 +75,12 @@ export async function listRiderOrders(riderId: string) {
 // infrastructure exists — `order_number` is already unique and printed
 // on the packed order label the same way `bill_number` prints on a POS
 // receipt, so it doubles as the scan target here.
-export async function handoverScan(scannedOrderNumber: string, riderId: string, gps: { lat: number; lng: number } | null) {
+export async function handoverScan(
+  scannedOrderNumber: string,
+  riderId: string,
+  gps: { lat: number; lng: number } | null,
+  override: { reasonCode: WebManualReasonCode; note: string; deviceId: string }
+) {
   const db = requirePool();
   const client = await db.connect();
   try {
@@ -86,6 +92,14 @@ export async function handoverScan(scannedOrderNumber: string, riderId: string, 
     if (order.status !== "assigned") throw new DeliveryError("not_assigned_status", { status: order.status });
 
     await client.query(`UPDATE orders SET status = 'out_for_delivery', handover_scanned_at = now(), updated_at = now() WHERE id = $1`, [order.id]);
+    // Section 10.1: "Rider handover" is one of the five listed
+    // scan-backed actions — same no-separate-scanning-client reasoning
+    // as put-away/pick/pack, so every handover here carries a mandatory
+    // reason code and note.
+    await recordManualOverride(
+      { action: "rider_handover", referenceType: "order", referenceId: order.id, reasonCode: override.reasonCode, note: override.note, actorUserId: riderId, deviceId: override.deviceId },
+      client
+    );
     if (gps) {
       await client.query(
         `INSERT INTO order_gps_pings (order_id, rider_id, lat, lng, kind) VALUES ($1,$2,$3,$4,'handover')`,

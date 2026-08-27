@@ -11,6 +11,7 @@ import {
   reviewTask,
   submitCount,
 } from "../repo/cycle-counts.js";
+import { WEB_MANUAL_REASON_CODES } from "../repo/manual-overrides.js";
 
 /**
  * Section 9 cycle counting: daily blind count of N bins, dual-entry
@@ -68,6 +69,9 @@ export default async function cycleCountRoutes(app: FastifyInstance) {
         })
       )
       .default([]),
+    scannedBinCode: z.string().min(1),
+    reasonCode: z.enum(WEB_MANUAL_REASON_CODES),
+    note: z.string().min(1),
   });
   app.post("/cycle-counts/:id/submit", { preHandler: app.authenticate }, async (req, reply) => {
     const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
@@ -79,6 +83,9 @@ export default async function cycleCountRoutes(app: FastifyInstance) {
         counts: body.data.counts,
         extraFinds: body.data.extraFinds.map((e) => ({ ...e, note: e.note ?? null })),
         countedBy: req.auth!.sub,
+        scannedBinCode: body.data.scannedBinCode,
+        reasonCode: body.data.reasonCode,
+        note: body.data.note,
       });
       reply.send(result);
     } catch (err) {

@@ -1,6 +1,7 @@
 import { pool } from "../db.js";
 import { selectBinsForCycleCount } from "../domain/cycle-count-selection.js";
 import { getSetting } from "./settings.js";
+import type { WebManualReasonCode } from "./manual-overrides.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -110,14 +111,22 @@ export interface SubmitCountInput {
   counts: Array<{ lineId: string; countedQuantityBaseUnits: number }>;
   extraFinds: Array<{ productId: string; batchNo: string; countedQuantityBaseUnits: number; note: string | null }>;
   countedBy: string;
+  // Section 10.1: "Cycle count entry" is a listed scan-backed action —
+  // web has no scanner, so opening a count requires typing the bin code
+  // in full (never a pre-filled value) plus the mandatory reason code.
+  // Verified against the task's own bin, same as put-away's bin check.
+  scannedBinCode: string;
+  reasonCode: WebManualReasonCode;
+  note: string;
 }
 
 export async function submitCount(input: SubmitCountInput) {
   const db = requirePool();
-  const { rows: taskRows } = await db.query(`SELECT * FROM cycle_count_tasks WHERE id = $1`, [input.taskId]);
+  const { rows: taskRows } = await db.query(`SELECT t.*, b.code AS bin_code FROM cycle_count_tasks t JOIN bins b ON b.id = t.bin_id WHERE t.id = $1`, [input.taskId]);
   const task = taskRows[0];
   if (!task) throw new CycleCountError("task_not_found");
   if (task.status !== "pending") throw new CycleCountError("already_counted");
+  if (task.bin_code !== input.scannedBinCode.trim()) throw new CycleCountError("bin_mismatch");
 
   const managerThreshold = await getSetting("cycle_count_variance_manager_threshold_inr", 500);
   const ownerThreshold = await getSetting("cycle_count_variance_owner_threshold_inr", 2000);
@@ -183,8 +192,11 @@ export async function submitCount(input: SubmitCountInput) {
     else if (totalVarianceValue > managerThreshold) escalatedTo = "manager";
 
     await client.query(
-      `UPDATE cycle_count_tasks SET status = 'counted', counted_by = $1, counted_at = now(), total_variance_value = $2, escalated_to = $3 WHERE id = $4`,
-      [input.countedBy, totalVarianceValue.toFixed(2), escalatedTo, input.taskId]
+      `UPDATE cycle_count_tasks
+       SET status = 'counted', counted_by = $1, counted_at = now(), total_variance_value = $2, escalated_to = $3,
+           count_reason_code = $4, count_note = $5
+       WHERE id = $6`,
+      [input.countedBy, totalVarianceValue.toFixed(2), escalatedTo, input.reasonCode, input.note, input.taskId]
     );
 
     await client.query("COMMIT");
@@ -225,14 +237,21 @@ export async function reviewTask(input: ReviewInput) {
         `SELECT * FROM cycle_count_lines WHERE cycle_count_task_id = $1 AND variance_base_units IS NOT NULL AND variance_base_units <> 0`,
         [input.taskId]
       );
+      // Section 10.1: this ledger row is the actual stock effect of a
+      // count that was itself entered manually (no scanner) — tagged
+      // web_manual whenever submitCount captured a reason, carrying that
+      // same reason/note forward onto the row that actually moves stock.
+      const ledgerSource = task.count_reason_code ? "web_manual" : "web";
       for (const line of lines) {
         await client.query(
           `INSERT INTO movement_ledger (movement_type, product_id, batch_id, bin_id, quantity_delta, reference_type, reference_id, reason_code, note, source, actor_user_id, device_id)
-           VALUES ('adjustment', $1, $2, $3, $4, 'cycle_count_task', $5, 'cycle_count_variance', $6, 'web', $7, $8)`,
+           VALUES ('adjustment', $1, $2, $3, $4, 'cycle_count_task', $5, 'cycle_count_variance', $6, $7, $8, $9)`,
           [
             line.product_id, line.batch_id, task.bin_id, line.variance_base_units, input.taskId,
-            line.is_unexpected_find ? "Unexpected item found during cycle count" : "Cycle count variance approved",
-            input.reviewedBy, input.deviceId,
+            line.is_unexpected_find
+              ? `Unexpected item found during cycle count${task.count_note ? ` — ${task.count_note}` : ""}`
+              : `Cycle count variance approved${task.count_note ? ` — ${task.count_note}` : ""}`,
+            ledgerSource, input.reviewedBy, input.deviceId,
           ]
         );
       }
