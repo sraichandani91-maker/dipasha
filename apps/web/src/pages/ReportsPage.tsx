@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, downloadFile } from "../api.js";
 
-type Tab = "registers" | "gstr1" | "gstr3b" | "traceability" | "inventory" | "exceptions" | "sync-conflicts";
+type Tab = "registers" | "gstr1" | "gstr3b" | "traceability" | "inventory" | "exceptions" | "sync-conflicts" | "manual-overrides";
 
 function defaultRange() {
   const now = new Date();
@@ -32,13 +32,13 @@ export default function ReportsPage() {
         {([
           ["registers", "Registers"], ["gstr1", "GSTR-1"], ["gstr3b", "GSTR-3B"],
           ["traceability", "Batch traceability"], ["inventory", "Location-wise inventory"], ["exceptions", "Negative stock"],
-          ["sync-conflicts", "Sync conflicts"],
+          ["sync-conflicts", "Sync conflicts"], ["manual-overrides", "Manual overrides"],
         ] as Array<[Tab, string]>).map(([key, label]) => (
           <button key={key} className={tab === key ? "btn-primary" : "btn-secondary"} onClick={() => setTab(key)}>{label}</button>
         ))}
       </div>
 
-      {tab !== "traceability" && tab !== "inventory" && tab !== "exceptions" && tab !== "sync-conflicts" && (
+      {tab !== "traceability" && tab !== "inventory" && tab !== "exceptions" && tab !== "sync-conflicts" && tab !== "manual-overrides" && (
         <div className="card" style={{ marginBottom: 12, display: "flex", gap: 12, alignItems: "flex-end" }}>
           <div className="field"><label>From</label><input type="date" value={range.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} /></div>
           <div className="field"><label>To</label><input type="date" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} /></div>
@@ -52,6 +52,47 @@ export default function ReportsPage() {
       {tab === "inventory" && <InventoryTab />}
       {tab === "exceptions" && <ExceptionsTab />}
       {tab === "sync-conflicts" && <SyncConflictsTab />}
+      {tab === "manual-overrides" && <ManualOverridesTab />}
+    </div>
+  );
+}
+
+// Section 10.1: "Surface every web_manual row on a dedicated Manual
+// Override report" — every scan-backed action done from web without a
+// scanner (put-away, pick, pack, rider handover, cycle count entry),
+// each with the reason code and note the person supplied at the time.
+function ManualOverridesTab() {
+  const [rows, setRows] = useState<any[] | null>(null);
+
+  function load() {
+    api.get("/reports/manual-overrides").then(setRows);
+  }
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div>
+      <p className="hint-text">
+        Every action recorded as manual entry because web has no scanner (Section 10.1). Not a sign of misuse on its own —
+        it's the entire operation today, since there's no separate scanning client yet — but every row here is visible, not silently absorbed.
+      </p>
+      <button className="btn-secondary" onClick={load} style={{ marginBottom: 8 }}>Refresh</button>
+      <table className="data-table">
+        <thead><tr><th>When</th><th>Action</th><th>Reference</th><th>Reason</th><th>Note</th><th>By</th><th>Device</th></tr></thead>
+        <tbody>
+          {rows?.map((r) => (
+            <tr key={r.id}>
+              <td>{new Date(r.occurredAt).toLocaleString()}</td>
+              <td>{r.action}</td>
+              <td>{r.referenceType ?? "—"} {r.referenceId ? r.referenceId.slice(0, 8) : ""}</td>
+              <td>{r.reasonCode ?? "—"}</td>
+              <td>{r.note ?? "—"}</td>
+              <td>{r.actorName}</td>
+              <td>{r.deviceId}</td>
+            </tr>
+          ))}
+          {rows && rows.length === 0 && <tr><td colSpan={7} className="hint-text">No manual overrides recorded.</td></tr>}
+        </tbody>
+      </table>
     </div>
   );
 }

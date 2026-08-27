@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api.js";
+import { useWebManualOverride, WebManualOverrideFields } from "../components/WebManualOverride.js";
 
 /**
  * Section 7: pick list generation (walk-path sorted, FEFO batch shown to
@@ -103,12 +104,13 @@ function PickList({ orderId, pickLines, onChanged }: { orderId: string; pickLine
   const allConfirmed = pickLines.length > 0 && pickLines.every((p) => p.scanned_confirmed);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const override = useWebManualOverride();
 
   async function completePicking() {
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/orders/${orderId}/complete-picking`);
+      await api.post(`/orders/${orderId}/complete-picking`, { deviceId: "web-console", reasonCode: override.reasonCode, note: override.note });
       onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? (err.body?.error ?? "Could not complete picking.") : "Could not complete picking.");
@@ -127,7 +129,13 @@ function PickList({ orderId, pickLines, onChanged }: { orderId: string; pickLine
           {pickLines.map((pl) => <PickLineRow key={pl.id} orderId={orderId} pickLine={pl} onChanged={onChanged} />)}
         </tbody>
       </table>
-      <button className="btn-primary" disabled={!allConfirmed || busy} onClick={completePicking} style={{ marginTop: 12 }}>
+      {allConfirmed && (
+        <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <p className="hint-text" style={{ margin: 0 }}>No scanner on web (Section 10.1) — confirming this picking session needs a reason:</p>
+          <WebManualOverrideFields reasonCode={override.reasonCode} setReasonCode={override.setReasonCode} note={override.note} setNote={override.setNote} />
+        </div>
+      )}
+      <button className="btn-primary" disabled={!allConfirmed || !override.valid || busy} onClick={completePicking} style={{ marginTop: 12 }}>
         {allConfirmed ? "Complete picking" : "Confirm every line to continue"}
       </button>
     </div>
@@ -246,12 +254,13 @@ function PackChecklist({ orderId, pickLines, onChanged }: { orderId: string; pic
   const allPacked = pickLines.length > 0 && pickLines.every((p) => p.packed_confirmed);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const override = useWebManualOverride();
 
   async function completePacking() {
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/orders/${orderId}/complete-packing`, { deviceId: "web-console" });
+      await api.post(`/orders/${orderId}/complete-packing`, { deviceId: "web-console", reasonCode: override.reasonCode, note: override.note });
       onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? (err.body?.error ?? "Could not complete packing.") : "Could not complete packing.");
@@ -270,7 +279,13 @@ function PackChecklist({ orderId, pickLines, onChanged }: { orderId: string; pic
           {pickLines.map((pl) => <PackLineRow key={pl.id} pickLine={pl} onChanged={onChanged} />)}
         </tbody>
       </table>
-      <button className="btn-primary" disabled={!allPacked || busy} onClick={completePacking} style={{ marginTop: 12 }}>
+      {allPacked && (
+        <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <p className="hint-text" style={{ margin: 0 }}>No scanner on web (Section 10.1) — confirming this packing session needs a reason:</p>
+          <WebManualOverrideFields reasonCode={override.reasonCode} setReasonCode={override.setReasonCode} note={override.note} setNote={override.setNote} />
+        </div>
+      )}
+      <button className="btn-primary" disabled={!allPacked || !override.valid || busy} onClick={completePacking} style={{ marginTop: 12 }}>
         {allPacked ? "Complete packing" : "Confirm every line to continue"}
       </button>
     </div>

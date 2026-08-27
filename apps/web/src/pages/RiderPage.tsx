@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api.js";
+import { useWebManualOverride, WebManualOverrideFields } from "../components/WebManualOverride.js";
 
 const FAILURE_REASONS: Array<{ code: string; label: string }> = [
   { code: "customer_unavailable", label: "Customer unavailable" },
@@ -72,14 +73,21 @@ function TripsTab() {
 
   const outForDelivery = orders?.find((o) => o.status === "out_for_delivery") ?? null;
   useInTransitGpsPings(outForDelivery?.id ?? null);
+  const override = useWebManualOverride();
 
   async function handover() {
-    if (!scanValue.trim()) return;
+    if (!scanValue.trim() || !override.valid) return;
     setBusy(true);
     setError(null);
     try {
       const gps = await getGpsOnce();
-      await api.post("/rider/handover", { orderNumber: scanValue.trim(), gps });
+      await api.post("/rider/handover", {
+        orderNumber: scanValue.trim(),
+        gps,
+        deviceId: "web-console",
+        reasonCode: override.reasonCode,
+        note: override.note,
+      });
       setScanValue("");
       await load();
     } catch (err) {
@@ -92,9 +100,12 @@ function TripsTab() {
   return (
     <div>
       <div className="card" style={{ marginBottom: 12 }}>
-        <p className="hint-text">Scan (or type) the order label at the store to mark handover.</p>
-        <input placeholder="Order number, e.g. ORD-000005" value={scanValue} onChange={(e) => setScanValue(e.target.value)} style={{ width: 240 }} />
-        <button className="btn-primary" disabled={busy} onClick={handover} style={{ marginLeft: 8 }}>Handover scan</button>
+        <p className="hint-text">Scan (or type) the order label at the store to mark handover. No scanner on web (Section 10.1) — a reason is required.</p>
+        <input placeholder="Order number, e.g. ORD-000005" value={scanValue} onChange={(e) => setScanValue(e.target.value)} style={{ width: 240, marginBottom: 6 }} />
+        <div>
+          <WebManualOverrideFields reasonCode={override.reasonCode} setReasonCode={override.setReasonCode} note={override.note} setNote={override.setNote} />
+        </div>
+        <button className="btn-primary" disabled={busy || !scanValue.trim() || !override.valid} onClick={handover} style={{ marginTop: 8 }}>Handover scan</button>
         {error && <p className="error-text">{error}</p>}
       </div>
 

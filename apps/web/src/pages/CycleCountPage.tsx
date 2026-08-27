@@ -3,6 +3,7 @@ import { api, ApiError } from "../api.js";
 import { useAuth } from "../auth/AuthContext.js";
 import QuantityInput from "../components/QuantityInput.js";
 import SearchBar from "../components/SearchBar.js";
+import { useWebManualOverride, WebManualOverrideFields } from "../components/WebManualOverride.js";
 
 interface Task {
   id: string;
@@ -134,6 +135,8 @@ function CountModal({ task, onClose, onDone }: { task: Task; onClose: () => void
   const [showAddFind, setShowAddFind] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scannedBinCode, setScannedBinCode] = useState("");
+  const override = useWebManualOverride();
 
   useEffect(() => {
     api.get(`/cycle-counts/${task.id}`).then((res) => setLines(res.lines));
@@ -145,20 +148,26 @@ function CountModal({ task, onClose, onDone }: { task: Task; onClose: () => void
   }
 
   const allCounted = lines !== null && lines.every((l) => counts[l.id] !== undefined) && extraFinds.every((f) => f.batchNo.trim() && f.countedQuantityBaseUnits > 0);
+  const canSubmit = allCounted && scannedBinCode.trim() === task.bin_code && override.valid;
 
   async function submit() {
-    if (!lines) return;
+    if (!lines || !canSubmit) return;
     setBusy(true);
     setError(null);
     try {
       await api.post(`/cycle-counts/${task.id}/submit`, {
         counts: lines.map((l) => ({ lineId: l.id, countedQuantityBaseUnits: counts[l.id] ?? 0 })),
         extraFinds: extraFinds.filter((f) => f.batchNo.trim()).map((f) => ({ productId: f.productId, batchNo: f.batchNo.trim(), countedQuantityBaseUnits: f.countedQuantityBaseUnits, note: f.note || null })),
+        scannedBinCode: scannedBinCode.trim(),
+        reasonCode: override.reasonCode,
+        note: override.note,
       });
       onDone();
     } catch (err) {
       if (err instanceof ApiError && err.body?.error === "unknown_batch") {
         setError("One of the found items has a batch number that doesn't exist in the catalogue — double-check it.");
+      } else if (err instanceof ApiError && err.body?.error === "bin_mismatch") {
+        setError("The bin code you typed doesn't match this task's bin — check it against the physical label.");
       } else {
         setError("Could not submit the count — try again.");
       }
@@ -206,10 +215,20 @@ function CountModal({ task, onClose, onDone }: { task: Task; onClose: () => void
           </div>
         )}
 
+        {allCounted && (
+          <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+            <p className="hint-text" style={{ margin: "0 0 6px" }}>No scanner on web (Section 10.1) — type the bin code from the physical label and give a reason:</p>
+            <div className="field" style={{ marginBottom: 6 }}>
+              <input placeholder={`Type bin code (e.g. ${task.bin_code})`} value={scannedBinCode} onChange={(e) => setScannedBinCode(e.target.value)} style={{ width: 220 }} />
+            </div>
+            <WebManualOverrideFields reasonCode={override.reasonCode} setReasonCode={override.setReasonCode} note={override.note} setNote={override.setNote} />
+          </div>
+        )}
+
         {error && <p className="error-text">{error}</p>}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
           <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={!allCounted || busy} onClick={submit}>{busy ? "Submitting…" : "Submit count"}</button>
+          <button className="btn-primary" disabled={!canSubmit || busy} onClick={submit}>{busy ? "Submitting…" : "Submit count"}</button>
         </div>
       </div>
     </div>
