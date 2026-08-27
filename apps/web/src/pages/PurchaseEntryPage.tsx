@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, ApiError } from "../api.js";
+import { api, ApiError, downloadFile, postForm } from "../api.js";
 import SearchBar from "../components/SearchBar.js";
 import QuantityInput from "../components/QuantityInput.js";
 
@@ -35,6 +35,212 @@ function expiryToIsoDate(mmYY: string): string | null {
 let lineKeySeq = 0;
 
 export default function PurchaseEntryPage() {
+  const [tab, setTab] = useState<"new" | "invoices">("new");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  if (selectedId) {
+    return <InvoiceDetail invoiceId={selectedId} onBack={() => setSelectedId(null)} />;
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+        <button className={tab === "new" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("new")}>+ New invoice</button>
+        <button className={tab === "invoices" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("invoices")}>Invoices</button>
+      </div>
+      {tab === "new" && <NewInvoiceForm />}
+      {tab === "invoices" && <InvoiceListTab onOpen={setSelectedId} />}
+    </div>
+  );
+}
+
+function InvoiceListTab({ onOpen }: { onOpen: (id: string) => void }) {
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [search, setSearch] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+
+  function query() {
+    const params = new URLSearchParams();
+    if (search.trim()) params.set("search", search.trim());
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    return params.toString();
+  }
+  async function load() {
+    setRows(await api.get(`/purchase-invoices?${query()}`));
+  }
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap" }}>
+        <div className="field"><label>From</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
+        <div className="field"><label>To</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+        <div className="field"><label>Search invoice #</label><input value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 180 }} /></div>
+        <button className="btn-primary" onClick={load}>Filter</button>
+      </div>
+      <table className="data-table">
+        <thead><tr><th>Invoice #</th><th>Vendor</th><th>Date</th><th>Net payable</th><th>Lines</th><th>Docs</th></tr></thead>
+        <tbody>
+          {rows?.map((r) => (
+            <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => onOpen(r.id)}>
+              <td>{r.invoice_number}</td>
+              <td>{r.vendor_name}</td>
+              <td>{new Date(r.invoice_date).toLocaleDateString("en-IN")}</td>
+              <td>₹{r.net_payable_computed}{Number(r.reconciliation_diff) !== 0 && <span className="badge badge-warn" style={{ marginLeft: 6 }}>recon diff</span>}</td>
+              <td>{r.line_count}</td>
+              <td>{r.document_count > 0 ? r.document_count : "—"}</td>
+            </tr>
+          ))}
+          {rows && rows.length === 0 && <tr><td colSpan={6} className="hint-text">No invoices match these filters.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const CORRECTION_FIELDS = ["invoice_number", "invoice_date", "payment_terms_days"] as const;
+const CORRECTION_REASON_CODES = ["data_entry_correction", "wrong_vendor_selected", "wrong_invoice_number", "other"];
+
+function InvoiceDetail({ invoiceId, onBack }: { invoiceId: string; onBack: () => void }) {
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showCorrect, setShowCorrect] = useState(false);
+  const [field, setField] = useState<(typeof CORRECTION_FIELDS)[number]>("invoice_number");
+  const [newValue, setNewValue] = useState("");
+  const [reasonCode, setReasonCode] = useState(CORRECTION_REASON_CODES[0]);
+  const [note, setNote] = useState("");
+
+  async function load() {
+    setData(await api.get(`/purchase-invoices/${invoiceId}`));
+  }
+  useEffect(() => { load(); }, [invoiceId]);
+
+  async function submitCorrection() {
+    if (!newValue.trim() || !note.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.patch(`/purchase-invoices/${invoiceId}`, { field, newValue, reasonCode, note, deviceId: "web-console" });
+      setShowCorrect(false);
+      setNewValue("");
+      setNote("");
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.body?.error ?? "Correction failed.") : "Correction failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadDocument(file: File) {
+    setBusy(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("document", file);
+      await postForm(`/purchase-invoices/${invoiceId}/documents`, form);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.body?.error ?? "Upload failed.") : "Upload failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!data) return <div>Loading…</div>;
+  const { invoice, lines, documents, corrections } = data;
+
+  return (
+    <div>
+      <button className="btn-secondary" onClick={onBack} style={{ marginBottom: 12 }}>← Back</button>
+      <h2 style={{ marginTop: 0 }}>{invoice.invoice_number} — {invoice.vendor_name}</h2>
+      <p className="hint-text">
+        {new Date(invoice.invoice_date).toLocaleDateString("en-IN")} · net payable ₹{invoice.net_payable_computed}
+        {invoice.reconciliation_diff !== "0.00" && <> · reconciliation diff ₹{invoice.reconciliation_diff}</>} · entered {invoice.entry_method}
+      </p>
+      {error && <p className="error-text">{error}</p>}
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Lines</h3>
+        <table className="data-table">
+          <thead><tr><th>Item</th><th>Batch</th><th>Qty</th><th>Rate</th><th>GST%</th><th>Line total</th></tr></thead>
+          <tbody>
+            {lines.map((l: any) => (
+              <tr key={l.id}>
+                <td>{l.product_name}</td>
+                <td>{l.batch_no}</td>
+                <td>{l.quantity_base_units}{l.free_quantity_base_units > 0 && ` (+${l.free_quantity_base_units} free)`}</td>
+                <td>₹{l.rate_before_discount}</td>
+                <td>{l.gst_rate}%</td>
+                <td>₹{l.line_total}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Documents</h3>
+        <p className="hint-text" style={{ marginTop: 0 }}>Scanned or photographed copy of the physical invoice — audit evidence, not required to save the invoice itself.</p>
+        {documents.length > 0 && (
+          <ul style={{ marginTop: 0 }}>
+            {documents.map((d: any) => (
+              <li key={d.id}>
+                <button className="btn-secondary" onClick={() => downloadFile(`/purchase-invoices/${invoiceId}/documents/${d.id}`, `${invoice.invoice_number}-${d.id}.${d.mime_type === "application/pdf" ? "pdf" : "jpg"}`)}>
+                  View
+                </button>{" "}
+                uploaded by {d.uploaded_by_name} · {new Date(d.created_at).toLocaleString("en-IN")}
+              </li>
+            ))}
+          </ul>
+        )}
+        <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" disabled={busy}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadDocument(f); e.target.value = ""; }} />
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Edit invoice header</h3>
+        <p className="hint-text" style={{ marginTop: 0 }}>
+          Invoice number, date, and payment terms only — quantity, rate, and GST already feed posted stock movements and can't be edited here.
+        </p>
+        {corrections.length > 0 && (
+          <ul className="hint-text">
+            {corrections.map((c: any, i: number) => (
+              <li key={i}>{c.field}: "{c.old_value}" → "{c.new_value}" ({c.reason_code.replace(/_/g, " ")}) — {c.note} · {c.actor_name}, {new Date(c.created_at).toLocaleString("en-IN")}</li>
+            ))}
+          </ul>
+        )}
+        {!showCorrect ? (
+          <button className="btn-secondary" disabled={busy} onClick={() => setShowCorrect(true)}>Correct a field</button>
+        ) : (
+          <div>
+            <div className="field">
+              <label>Field</label>
+              <select value={field} onChange={(e) => setField(e.target.value as any)}>
+                {CORRECTION_FIELDS.map((f) => <option key={f} value={f}>{f.replace(/_/g, " ")}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>New value</label><input value={newValue} onChange={(e) => setNewValue(e.target.value)} placeholder={field === "invoice_date" ? "YYYY-MM-DD" : ""} /></div>
+            <div className="field">
+              <label>Reason</label>
+              <select value={reasonCode} onChange={(e) => setReasonCode(e.target.value)}>
+                {CORRECTION_REASON_CODES.map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>Note (required)</label><input value={note} onChange={(e) => setNote(e.target.value)} style={{ width: 320 }} /></div>
+            <button className="btn-primary" disabled={busy || !newValue.trim() || !note.trim()} onClick={submitCorrection}>Save correction</button>
+            <button className="btn-secondary" disabled={busy} onClick={() => setShowCorrect(false)} style={{ marginLeft: 8 }}>Never mind</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NewInvoiceForm() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [vendorId, setVendorId] = useState("");
   const [showNewVendor, setShowNewVendor] = useState(false);

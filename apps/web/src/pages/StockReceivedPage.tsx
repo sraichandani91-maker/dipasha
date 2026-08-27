@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import SearchBar from "../components/SearchBar.js";
 import QuantityInput from "../components/QuantityInput.js";
@@ -11,6 +11,70 @@ const REASON_CODES = ["free_sample", "scheme_goods", "opening_stock", "replaceme
  * purchase rate; an optional notional value keeps valuation meaningful.
  */
 export default function StockReceivedPage() {
+  const [tab, setTab] = useState<"new" | "received">("new");
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+        <button className={tab === "new" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("new")}>+ Received</button>
+        <button className={tab === "received" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("received")}>Received log</button>
+      </div>
+      {tab === "new" && <NewStockReceivedForm />}
+      {tab === "received" && <ReceivedLogTab />}
+    </div>
+  );
+}
+
+function ReceivedLogTab() {
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [search, setSearch] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+
+  function query() {
+    const params = new URLSearchParams();
+    if (search.trim()) params.set("search", search.trim());
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    return params.toString();
+  }
+  async function load() {
+    setRows(await api.get(`/stock-movements/stock-received?${query()}`));
+  }
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap" }}>
+        <div className="field"><label>From</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
+        <div className="field"><label>To</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+        <div className="field"><label>Search item / batch</label><input value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 180 }} /></div>
+        <button className="btn-primary" onClick={load}>Filter</button>
+      </div>
+      <table className="data-table">
+        <thead><tr><th>Item</th><th>Batch</th><th>Qty</th><th>Reason</th><th>Received</th><th>By</th></tr></thead>
+        <tbody>
+          {rows?.map((r) => (
+            <tr key={r.id}>
+              <td>{r.product_name}</td>
+              <td>{r.batch_no}</td>
+              <td>{r.quantity_delta}</td>
+              <td>{r.reason_code.replace(/_/g, " ")}</td>
+              <td>{new Date(r.created_at).toLocaleString("en-IN")}</td>
+              <td>{r.created_by_name}</td>
+            </tr>
+          ))}
+          {rows && rows.length === 0 && <tr><td colSpan={6} className="hint-text">No entries match these filters.</td></tr>}
+        </tbody>
+      </table>
+      <p className="hint-text" style={{ marginTop: 8 }}>
+        A wrong quantity or MRP is correctable from the Inventory screen's batch-correction tools — the same path used
+        regardless of how a batch first arrived.
+      </p>
+    </div>
+  );
+}
+
+function NewStockReceivedForm() {
   const [product, setProduct] = useState<any>(null);
   const [batchNo, setBatchNo] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
