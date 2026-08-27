@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, apiPdfUrl, getTokens, postForm } from "../api.js";
+import { api, ApiError, apiPdfUrl, downloadFile, getTokens, postForm } from "../api.js";
 import SearchBar from "../components/SearchBar.js";
 
 interface CatalogLine {
@@ -34,7 +34,7 @@ const STATUS_LABEL: Record<string, string> = {
  * Manager."
  */
 export default function DeliveryOrdersPage() {
-  const [tab, setTab] = useState<"new" | "queue" | "active">("queue");
+  const [tab, setTab] = useState<"new" | "queue" | "active" | "all">("queue");
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
   if (selectedOrderId) {
@@ -47,11 +47,70 @@ export default function DeliveryOrdersPage() {
       <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
         <button className={tab === "queue" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("queue")}>Pending review</button>
         <button className={tab === "active" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("active")}>Active orders</button>
+        <button className={tab === "all" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("all")}>All orders</button>
         <button className={tab === "new" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("new")}>+ New order</button>
       </div>
       {tab === "queue" && <PendingQueue onOpen={setSelectedOrderId} />}
       {tab === "active" && <ActiveOrders onOpen={setSelectedOrderId} />}
+      {tab === "all" && <AllOrdersTab onOpen={setSelectedOrderId} />}
       {tab === "new" && <NewOrderForm onCreated={setSelectedOrderId} />}
+    </div>
+  );
+}
+
+/** Section 10.2: "full order list, filterable, exportable." */
+function AllOrdersTab({ onOpen }: { onOpen: (id: string) => void }) {
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [status, setStatus] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [search, setSearch] = useState("");
+
+  function query() {
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (search.trim()) params.set("search", search.trim());
+    return params.toString();
+  }
+
+  async function load() {
+    setRows(await api.get(`/orders?${query()}`));
+  }
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap" }}>
+        <div className="field">
+          <label>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 170 }}>
+            <option value="">All</option>
+            {Object.keys(STATUS_LABEL).map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+          </select>
+        </div>
+        <div className="field"><label>From</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
+        <div className="field"><label>To</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+        <div className="field"><label>Search</label><input placeholder="order #, customer, phone" value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 200 }} /></div>
+        <button className="btn-primary" onClick={load}>Filter</button>
+        <button className="btn-secondary" onClick={() => downloadFile(`/orders?${query()}&format=csv`, "orders.csv")}>Export CSV</button>
+      </div>
+      <table className="data-table">
+        <thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Rider</th><th>Created</th></tr></thead>
+        <tbody>
+          {rows?.map((r) => (
+            <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => onOpen(r.id)}>
+              <td>{r.order_number}</td>
+              <td>{r.customer_name} · {r.customer_phone}</td>
+              <td>{STATUS_LABEL[r.status] ?? r.status}</td>
+              <td>{r.rider_name ?? "—"}</td>
+              <td>{new Date(r.created_at).toLocaleString()}</td>
+            </tr>
+          ))}
+          {rows && rows.length === 0 && <tr><td colSpan={5} className="hint-text">No orders match these filters.</td></tr>}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -313,12 +372,15 @@ function OrderImageThumb({ imageId, kind }: { imageId: string; kind: string }) {
   );
 }
 
+const PRE_PICK_STATUSES = ["received", "under_review", "quoted", "customer_confirmed", "awaiting_prescription"];
+
 function OrderReview({ orderId, onBack }: { orderId: string; onBack: () => void }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [deliveryCharge, setDeliveryCharge] = useState("0");
   const [addLineText, setAddLineText] = useState("");
+  const [showAddCatalogLine, setShowAddCatalogLine] = useState(false);
 
   async function load() {
     setData(await api.get(`/orders/${orderId}`));
@@ -327,6 +389,7 @@ function OrderReview({ orderId, onBack }: { orderId: string; onBack: () => void 
 
   if (!data) return <div>Loading…</div>;
   const { order, lines, images, messages, pickLines } = data;
+  const editablePrePick = PRE_PICK_STATUSES.includes(order.status);
 
   async function act(fn: () => Promise<any>) {
     setBusy(true);
@@ -345,6 +408,11 @@ function OrderReview({ orderId, onBack }: { orderId: string; onBack: () => void 
     if (!addLineText.trim()) return;
     await act(() => api.post(`/orders/${orderId}/lines`, { sourceType: "free_text", descriptionAsEntered: addLineText }));
     setAddLineText("");
+  }
+
+  async function addCatalogLine(p: any) {
+    await act(() => api.post(`/orders/${orderId}/catalog-lines`, { productId: p.id, quantityRequestedUnits: p.packSize ?? 1 }));
+    setShowAddCatalogLine(false);
   }
 
   return (
@@ -375,7 +443,7 @@ function OrderReview({ orderId, onBack }: { orderId: string; onBack: () => void 
             <thead><tr><th>Item</th><th>Qty</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {lines.map((l: any) => (
-                <OrderLineRow key={l.id} orderId={orderId} line={l} onChanged={load} disabled={!["received", "under_review"].includes(order.status)} />
+                <OrderLineRow key={l.id} orderId={orderId} line={l} onChanged={load} disabled={!editablePrePick} />
               ))}
             </tbody>
           </table>
@@ -385,8 +453,17 @@ function OrderReview({ orderId, onBack }: { orderId: string; onBack: () => void 
               <button className="btn-secondary" onClick={addBlankLine} disabled={busy}>+ Add line</button>
             </div>
           )}
+          {editablePrePick && (
+            <div style={{ marginTop: 8 }}>
+              {showAddCatalogLine ? (
+                <SearchBar context="delivery_order" onSelect={addCatalogLine} autoFocus />
+              ) : (
+                <button className="btn-secondary" onClick={() => setShowAddCatalogLine(true)} disabled={busy}>+ Add item from catalogue</button>
+              )}
+            </div>
+          )}
 
-          {order.rx_required && !order.rx_verified && (
+          {order.rx_required && !order.rx_verified && editablePrePick && (
             <div className="card" style={{ marginTop: 12, background: "color-mix(in srgb, var(--status-warn, orange) 10%, white)" }}>
               <p>This order needs prescription verification before picking can start.</p>
               <button className="btn-primary" disabled={busy} onClick={() => act(() => api.post(`/orders/${orderId}/verify-prescription`))}>Mark prescription verified</button>
@@ -413,7 +490,157 @@ function OrderReview({ orderId, onBack }: { orderId: string; onBack: () => void 
               <p className="hint-text">Pick/pack in progress — see the Pick &amp; Pack screen.</p>
             </div>
           )}
+
+          <OrderActionsPanel order={order} busy={busy} act={act} />
         </div>
+      </div>
+    </div>
+  );
+}
+
+const ORDER_CANCEL_REASON_CODES = ["customer_requested", "duplicate_order", "payment_issue", "out_of_stock", "other"];
+const REASSIGNABLE_STATUSES = ["assigned", "out_for_delivery"];
+const TERMINAL_ORDER_STATUSES = ["cancelled", "rejected", "delivered"];
+const DISPATCHED_STATUSES = ["assigned", "out_for_delivery", "delivery_failed"];
+
+/**
+ * Section 10.2: cancel-with-reversal, force-reassign rider, and a refund
+ * stub. Cancel/reassign are only offered pre-terminal; the refund section
+ * stays visible on a terminal order too — a refund initiated against a
+ * cancelled order is exactly the record the Owner still needs to see.
+ */
+function OrderActionsPanel({ order, busy, act }: { order: any; busy: boolean; act: (fn: () => Promise<any>) => Promise<void> }) {
+  const [showCancel, setShowCancel] = useState(false);
+  const [cancelReason, setCancelReason] = useState(ORDER_CANCEL_REASON_CODES[0]);
+  const [cancelNote, setCancelNote] = useState("");
+
+  const [showReassign, setShowReassign] = useState(false);
+  const [riders, setRiders] = useState<Array<{ id: string; name: string }>>([]);
+  const [newRiderId, setNewRiderId] = useState("");
+  const [reassignNote, setReassignNote] = useState("");
+
+  const [showRefund, setShowRefund] = useState(false);
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundReason, setRefundReason] = useState("");
+  const [refunds, setRefunds] = useState<any[] | null>(null);
+
+  useEffect(() => {
+    if (showReassign && riders.length === 0) api.get("/riders").then(setRiders);
+  }, [showReassign]);
+
+  async function loadRefunds() {
+    setRefunds(await api.get(`/orders/${order.id}/refunds`));
+  }
+  useEffect(() => { loadRefunds(); }, [order.id]);
+
+  const isTerminal = TERMINAL_ORDER_STATUSES.includes(order.status);
+  const canCancel = !isTerminal && !DISPATCHED_STATUSES.includes(order.status);
+  const showDispatchedNotice = !isTerminal && DISPATCHED_STATUSES.includes(order.status);
+
+  async function cancel() {
+    if (!cancelNote.trim()) return;
+    await act(() => api.post(`/orders/${order.id}/cancel`, { reasonCode: cancelReason, note: cancelNote, deviceId: "web-console" }));
+    setShowCancel(false);
+    setCancelNote("");
+  }
+
+  async function reassign() {
+    if (!newRiderId || !reassignNote.trim()) return;
+    await act(() => api.post(`/orders/${order.id}/reassign-rider`, { riderId: newRiderId, note: reassignNote }));
+    setShowReassign(false);
+    setNewRiderId("");
+    setReassignNote("");
+  }
+
+  async function submitRefund() {
+    if (!refundAmount || Number(refundAmount) <= 0 || !refundReason.trim()) return;
+    await act(async () => {
+      await api.post(`/orders/${order.id}/refunds`, { amount: Number(refundAmount), reason: refundReason });
+      await loadRefunds();
+    });
+    setShowRefund(false);
+    setRefundAmount("");
+    setRefundReason("");
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 12 }}>
+      <h3 style={{ marginTop: 0 }}>Order actions</h3>
+
+      {canCancel && (
+        <div style={{ marginBottom: 12 }}>
+          {!showCancel ? (
+            <button className="btn-secondary" disabled={busy} onClick={() => setShowCancel(true)}>Cancel order</button>
+          ) : (
+            <div>
+              <div className="field">
+                <label>Reason</label>
+                <select value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} style={{ width: 200 }}>
+                  {ORDER_CANCEL_REASON_CODES.map((c) => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label>Note (required)</label>
+                <input value={cancelNote} onChange={(e) => setCancelNote(e.target.value)} style={{ width: 320 }} />
+              </div>
+              <button className="btn-primary" disabled={busy || !cancelNote.trim()} onClick={cancel}>Confirm cancel</button>
+              <button className="btn-secondary" disabled={busy} onClick={() => setShowCancel(false)} style={{ marginLeft: 8 }}>Never mind</button>
+            </div>
+          )}
+        </div>
+      )}
+      {showDispatchedNotice && (
+        <p className="hint-text">This order is already out for delivery — cancelling it here won't retrieve a package already in a rider's hands. Use the delivery-failure flow on the Rider screen instead.</p>
+      )}
+
+      {REASSIGNABLE_STATUSES.includes(order.status) && (
+        <div style={{ marginBottom: 12 }}>
+          {!showReassign ? (
+            <button className="btn-secondary" disabled={busy} onClick={() => setShowReassign(true)}>Force-reassign rider</button>
+          ) : (
+            <div>
+              <p className="hint-text">This only corrects the system record — it doesn't physically move a package already with {order.rider_name ?? "the current rider"}.</p>
+              <div className="field">
+                <label>New rider</label>
+                <select value={newRiderId} onChange={(e) => setNewRiderId(e.target.value)} style={{ width: 200 }}>
+                  <option value="">Select…</option>
+                  {riders.filter((r) => r.id !== order.rider_id).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label>Note (required)</label>
+                <input value={reassignNote} onChange={(e) => setReassignNote(e.target.value)} style={{ width: 320 }} placeholder="e.g. original rider called in sick" />
+              </div>
+              <button className="btn-primary" disabled={busy || !newRiderId || !reassignNote.trim()} onClick={reassign}>Confirm reassignment</button>
+              <button className="btn-secondary" disabled={busy} onClick={() => setShowReassign(false)} style={{ marginLeft: 8 }}>Never mind</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div>
+        <h4 style={{ marginBottom: 4 }}>Refunds</h4>
+        <p className="hint-text" style={{ marginTop: 0 }}>Stub only — records intent for the Owner to process manually. No payment gateway is connected.</p>
+        {refunds && refunds.length > 0 && (
+          <table className="data-table" style={{ marginBottom: 8 }}>
+            <thead><tr><th>Amount</th><th>Reason</th><th>Status</th><th>Requested by</th></tr></thead>
+            <tbody>
+              {refunds.map((r) => (
+                <tr key={r.id}><td>₹{r.amount}</td><td>{r.reason}</td><td>{r.status}</td><td>{r.requested_by_name}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {!showRefund ? (
+          <button className="btn-secondary" disabled={busy} onClick={() => setShowRefund(true)}>Initiate refund</button>
+        ) : (
+          <div>
+            <div className="field"><label>Amount</label><input type="number" value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} style={{ width: 100 }} /></div>
+            <div className="field"><label>Reason</label><input value={refundReason} onChange={(e) => setRefundReason(e.target.value)} style={{ width: 320 }} /></div>
+            <button className="btn-primary" disabled={busy || !refundAmount || Number(refundAmount) <= 0 || !refundReason.trim()} onClick={submitRefund}>Record refund request</button>
+            <button className="btn-secondary" disabled={busy} onClick={() => setShowRefund(false)} style={{ marginLeft: 8 }}>Never mind</button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -429,7 +656,7 @@ function OrderLineRow({ orderId, line, onChanged, disabled }: { orderId: string;
     setError(null);
     try {
       await api.post(`/orders/${orderId}/lines/${line.id}/resolve`, {
-        action: "match", productId: p.id, quantityConfirmedUnits: p.packSize ?? line.quantity_requested_units ?? 1, deviceId: "web-console",
+        action: line.product_id ? "substitute" : "match", productId: p.id, quantityConfirmedUnits: p.packSize ?? line.quantity_requested_units ?? 1, deviceId: "web-console",
       });
       setShowResolve(false);
       onChanged();
@@ -457,6 +684,20 @@ function OrderLineRow({ orderId, line, onChanged, disabled }: { orderId: string;
       setBusy(false);
     }
   }
+  async function removeLine() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.delete(`/orders/${orderId}/lines/${line.id}`);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.body?.error ?? "Could not remove.") : "Could not remove.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const isMatched = line.line_status === "matched" || line.line_status === "substituted";
 
   return (
     <tr>
@@ -468,11 +709,20 @@ function OrderLineRow({ orderId, line, onChanged, disabled }: { orderId: string;
       <td>{line.quantity_confirmed_units ?? line.quantity_requested_units ?? "—"}</td>
       <td>{line.line_status}</td>
       <td>
-        {!disabled && line.line_status !== "matched" && line.line_status !== "substituted" && (
+        {!disabled && !isMatched && (
           <>
             <button className="btn-secondary" disabled={busy} onClick={() => setShowResolve((s) => !s)}>Match</button>{" "}
             <button className="btn-secondary" disabled={busy} onClick={markUnavailable}>Unavailable</button>{" "}
             <button className="btn-secondary" disabled={busy} onClick={pushToRequestBook}>To request book</button>
+          </>
+        )}
+        {/* Section 10.2 "edit pre-pick": once a line is already matched, its quantity/product can still be
+            changed (substitution) here — the only thing that can't happen post-pick is adding/removing lines,
+            which is gated at the parent's "+ Add item" control and this Remove button instead. */}
+        {!disabled && isMatched && (
+          <>
+            <button className="btn-secondary" disabled={busy} onClick={() => setShowResolve((s) => !s)}>Substitute</button>{" "}
+            <button className="btn-secondary" disabled={busy} onClick={removeLine}>Remove</button>
           </>
         )}
       </td>
