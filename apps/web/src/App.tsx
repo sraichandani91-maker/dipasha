@@ -24,12 +24,13 @@ import ScanInvoicePage from "./pages/ScanInvoicePage.js";
 import DeliveryOrdersPage from "./pages/DeliveryOrdersPage.js";
 import PickPackPage from "./pages/PickPackPage.js";
 import RiderPage from "./pages/RiderPage.js";
+import StaffPage from "./pages/StaffPage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
   | "cycle-counts" | "expiry-audit" | "write-offs" | "reports"
   | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
-  | "delivery-orders" | "pick-pack" | "rider";
+  | "delivery-orders" | "pick-pack" | "rider" | "staff";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -113,6 +114,9 @@ export default function App() {
           {user.role === "rider" && (
             <button className={tab === "rider" ? "active" : ""} onClick={() => setTab("rider")}>My trips</button>
           )}
+          {user.role === "owner" && (
+            <button className={tab === "staff" ? "active" : ""} onClick={() => setTab("staff")}>Staff</button>
+          )}
         </nav>
         <div className="spacer" />
         {user.impersonating && <span className="impersonating">IMPERSONATING {user.role.toUpperCase()}</span>}
@@ -156,6 +160,7 @@ export default function App() {
             {tab === "delivery-orders" && <DeliveryOrdersPage />}
             {tab === "pick-pack" && <PickPackPage />}
             {tab === "rider" && <RiderPage />}
+            {tab === "staff" && <StaffPage />}
           </>
         )}
       </div>
