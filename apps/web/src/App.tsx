@@ -12,6 +12,7 @@ import PurchaseOrdersPage from "./pages/PurchaseOrdersPage.js";
 import DailyReviewScreen from "./pages/DailyReviewScreen.js";
 import DailyReviewAlarm from "./components/DailyReviewAlarm.js";
 import CycleCountPage from "./pages/CycleCountPage.js";
+import ColdChainPage from "./pages/ColdChainPage.js";
 import ExpiryAuditPage from "./pages/ExpiryAuditPage.js";
 import WriteOffsPage from "./pages/WriteOffsPage.js";
 import ReportsPage from "./pages/ReportsPage.js";
@@ -29,7 +30,7 @@ import InventoryPage from "./pages/InventoryPage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
-  | "cycle-counts" | "expiry-audit" | "write-offs" | "reports"
+  | "cycle-counts" | "cold-chain" | "expiry-audit" | "write-offs" | "reports"
   | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
   | "delivery-orders" | "pick-pack" | "rider" | "staff" | "inventory";
 
@@ -85,6 +86,7 @@ export default function App() {
             <button className={tab === "purchase-orders" ? "active" : ""} onClick={() => setTab("purchase-orders")}>Purchase orders</button>
           )}
           <button className={tab === "cycle-counts" ? "active" : ""} onClick={() => setTab("cycle-counts")}>Cycle counts</button>
+          <button className={tab === "cold-chain" ? "active" : ""} onClick={() => setTab("cold-chain")}>Cold chain</button>
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "expiry-audit" ? "active" : ""} onClick={() => setTab("expiry-audit")}>Expiry audit</button>
           )}
@@ -153,6 +155,7 @@ export default function App() {
             {tab === "requests" && <RequestBookPage onFulfillAtPos={fulfillAtPos} />}
             {tab === "purchase-orders" && <PurchaseOrdersPage />}
             {tab === "cycle-counts" && <CycleCountPage />}
+            {tab === "cold-chain" && <ColdChainPage />}
             {tab === "expiry-audit" && <ExpiryAuditPage />}
             {tab === "write-offs" && <WriteOffsPage />}
             {tab === "reports" && <ReportsPage />}

@@ -35,15 +35,18 @@ const REASON_LABELS: Record<string, string> = {
 export default function CycleCountPage() {
   const { user } = useAuth();
   const canManage = user?.role === "owner" || user?.role === "store_manager";
+  const [tab, setTab] = useState<"today" | "schedule">("today");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [countingTask, setCountingTask] = useState<Task | null>(null);
   const [reviewingTask, setReviewingTask] = useState<Task | null>(null);
   const [busy, setBusy] = useState(false);
+  const [staff, setStaff] = useState<any[]>([]);
 
   async function load() {
     setTasks(await api.get("/cycle-counts/today"));
   }
   useEffect(() => { load(); }, []);
+  useEffect(() => { if (canManage) api.get("/users").then(setStaff); }, [canManage]);
 
   async function generateToday() {
     setBusy(true);
@@ -55,6 +58,11 @@ export default function CycleCountPage() {
     }
   }
 
+  async function assign(taskId: string, assignedTo: string) {
+    await api.patch(`/cycle-counts/${taskId}/assign`, { assignedTo });
+    await load();
+  }
+
   const grouped = {
     pending: tasks.filter((t) => t.status === "pending"),
     counted: tasks.filter((t) => t.status === "counted"),
@@ -64,41 +72,66 @@ export default function CycleCountPage() {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 style={{ marginTop: 0 }}>Cycle count — today</h2>
-        {canManage && (
+        <h2 style={{ marginTop: 0 }}>Cycle count</h2>
+        {canManage && tab === "today" && (
           <button className="btn-primary" disabled={busy} onClick={generateToday}>
             {busy ? "Generating…" : tasks.length > 0 ? "Top up today's queue" : "Generate today's queue"}
           </button>
         )}
       </div>
-      <p className="hint-text">
-        Section 9 — blind count of a rotating set of bins. Selected by highest value, highest movement, longest
-        since last counted, and flagged variance history. The counter never sees the system quantity.
-      </p>
-
-      {tasks.length === 0 && <div className="card"><p className="hint-text" style={{ margin: 0 }}>No bins queued yet today.</p></div>}
-
-      {(["pending", "counted", "reviewed"] as const).map((status) =>
-        grouped[status].length === 0 ? null : (
-          <div key={status} style={{ marginTop: 16 }}>
-            <h3 style={{ textTransform: "capitalize" }}>{status} ({grouped[status].length})</h3>
-            {grouped[status].map((t) => (
-              <div key={t.id} className="card" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <strong>{t.bin_code}</strong>{" "}
-                  <span className="badge badge-info">{REASON_LABELS[t.selection_reason] ?? t.selection_reason}</span>
-                  {t.escalated_to && <span className="badge badge-bad" style={{ marginLeft: 6 }}>Escalated to {t.escalated_to}</span>}
-                  {t.review_outcome && <span className={`badge ${t.review_outcome === "approved" ? "badge-good" : "badge-warn"}`} style={{ marginLeft: 6 }}>{t.review_outcome}</span>}
-                  {t.total_variance_value !== null && <div className="hint-text">Variance value: ₹{Number(t.total_variance_value).toFixed(2)}</div>}
-                  {t.counted_by_name && <div className="hint-text">Counted by {t.counted_by_name}</div>}
-                </div>
-                {status === "pending" && <button className="btn-primary" onClick={() => setCountingTask(t)}>Count this bin</button>}
-                {status === "counted" && canManage && <button className="btn-primary" onClick={() => setReviewingTask(t)}>Review variance</button>}
-              </div>
-            ))}
-          </div>
-        )
+      {canManage && (
+        <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+          <button className={tab === "today" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("today")}>Today</button>
+          <button className={tab === "schedule" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("schedule")}>Schedule &amp; assign</button>
+        </div>
       )}
+
+      {tab === "today" && (
+        <>
+          <p className="hint-text">
+            Section 9 — blind count of a rotating set of bins. Selected by highest value, highest movement, longest
+            since last counted, and flagged variance history. The counter never sees the system quantity.
+          </p>
+
+          {tasks.length === 0 && <div className="card"><p className="hint-text" style={{ margin: 0 }}>No bins queued yet today.</p></div>}
+
+          {(["pending", "counted", "reviewed"] as const).map((status) =>
+            grouped[status].length === 0 ? null : (
+              <div key={status} style={{ marginTop: 16 }}>
+                <h3 style={{ textTransform: "capitalize" }}>{status} ({grouped[status].length})</h3>
+                {grouped[status].map((t) => (
+                  <div key={t.id} className="card" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <strong>{t.bin_code}</strong>{" "}
+                      <span className="badge badge-info">{REASON_LABELS[t.selection_reason] ?? t.selection_reason}</span>
+                      {t.escalated_to && <span className="badge badge-bad" style={{ marginLeft: 6 }}>Escalated to {t.escalated_to}</span>}
+                      {t.review_outcome && <span className={`badge ${t.review_outcome === "approved" ? "badge-good" : "badge-warn"}`} style={{ marginLeft: 6 }}>{t.review_outcome}</span>}
+                      {t.total_variance_value !== null && <div className="hint-text">Variance value: ₹{Number(t.total_variance_value).toFixed(2)}</div>}
+                      {t.counted_by_name && <div className="hint-text">Counted by {t.counted_by_name}</div>}
+                      {status === "pending" && canManage && (
+                        <div style={{ marginTop: 4 }}>
+                          {t.assigned_to_name ? (
+                            <span className="hint-text">Assigned to {t.assigned_to_name}</span>
+                          ) : (
+                            <select defaultValue="" onChange={(e) => e.target.value && assign(t.id, e.target.value)} style={{ fontSize: "0.85em" }}>
+                              <option value="">Assign to…</option>
+                              {staff.filter((s: any) => s.status === "active").map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {status === "pending" && <button className="btn-primary" onClick={() => setCountingTask(t)}>Count this bin</button>}
+                    {status === "counted" && canManage && <button className="btn-primary" onClick={() => setReviewingTask(t)}>Review variance</button>}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </>
+      )}
+
+      {tab === "schedule" && canManage && <ScheduleTab staff={staff} />}
 
       {countingTask && (
         <CountModal task={countingTask} onClose={() => setCountingTask(null)} onDone={() => { setCountingTask(null); load(); }} />
@@ -106,6 +139,110 @@ export default function CycleCountPage() {
       {reviewingTask && (
         <ReviewModal task={reviewingTask} onClose={() => setReviewingTask(null)} onDone={() => { setReviewingTask(null); load(); }} />
       )}
+    </div>
+  );
+}
+
+function tomorrowIso(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Section 10.2: "schedule/assign cycle counts" — pick specific bins for
+ * a specific date (today or upcoming), optionally straight to an
+ * assignee, regardless of what the daily automatic selection would have
+ * picked. */
+function ScheduleTab({ staff }: { staff: any[] }) {
+  const [date, setDate] = useState(tomorrowIso());
+  const [bins, setBins] = useState<any[]>([]);
+  const [selectedBinIds, setSelectedBinIds] = useState<string[]>([]);
+  const [assignedTo, setAssignedTo] = useState("");
+  const [scheduled, setScheduled] = useState<any[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  useEffect(() => { api.get("/bins?status=active").then(setBins); }, []);
+
+  async function loadScheduled() {
+    setScheduled(await api.get(`/cycle-counts?date=${date}`));
+  }
+  useEffect(() => { loadScheduled(); }, [date]);
+
+  function toggleBin(id: string) {
+    setSelectedBinIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+  }
+
+  async function schedule() {
+    if (selectedBinIds.length === 0) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await api.post("/cycle-counts/schedule", {
+        binIds: selectedBinIds, businessDate: date, assignedTo: assignedTo || null, deviceId: "web-console",
+      });
+      setResult(`Scheduled ${res.created} bin(s)${res.skipped.length > 0 ? `; ${res.skipped.length} already had a count scheduled that day` : ""}.`);
+      setSelectedBinIds([]);
+      await loadScheduled();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function assign(taskId: string, userId: string) {
+    await api.patch(`/cycle-counts/${taskId}/assign`, { assignedTo: userId });
+    await loadScheduled();
+  }
+
+  return (
+    <div>
+      <div className="field" style={{ marginBottom: 12 }}>
+        <label>Date</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Already scheduled for {date}</h3>
+        {scheduled?.length === 0 && <p className="hint-text" style={{ margin: 0 }}>Nothing scheduled yet.</p>}
+        {scheduled?.map((t) => (
+          <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+            <div>
+              <strong>{t.bin_code}</strong> <span className="badge badge-info">{REASON_LABELS[t.selection_reason] ?? t.selection_reason}</span>{" "}
+              <span className="hint-text">{t.status}</span>
+            </div>
+            {t.assigned_to_name ? (
+              <span className="hint-text">Assigned to {t.assigned_to_name}</span>
+            ) : (
+              <select defaultValue="" onChange={(e) => e.target.value && assign(t.id, e.target.value)}>
+                <option value="">Assign to…</option>
+                {staff.filter((s: any) => s.status === "active").map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Schedule more bins for {date}</h3>
+        {result && <p className="hint-text">{result}</p>}
+        <div className="field" style={{ marginBottom: 8 }}>
+          <label>Assign to (optional)</label>
+          <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)}>
+            <option value="">Leave unassigned</option>
+            {staff.filter((s: any) => s.status === "active").map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: 8 }}>
+          {bins.map((b: any) => (
+            <label key={b.id} style={{ display: "block", padding: "2px 0" }}>
+              <input type="checkbox" checked={selectedBinIds.includes(b.id)} onChange={() => toggleBin(b.id)} /> {b.code}
+            </label>
+          ))}
+        </div>
+        <button className="btn-primary" style={{ marginTop: 8 }} disabled={busy || selectedBinIds.length === 0} onClick={schedule}>
+          {busy ? "Scheduling…" : `Schedule ${selectedBinIds.length || ""} bin(s)`}
+        </button>
+      </div>
     </div>
   );
 }
