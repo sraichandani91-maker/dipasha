@@ -9,6 +9,7 @@ import {
   getTaskForCounting,
   listTasksForDate,
   reviewTask,
+  scheduleManualCycleCountTasks,
   submitCount,
 } from "../repo/cycle-counts.js";
 import { WEB_MANUAL_REASON_CODES } from "../repo/manual-overrides.js";
@@ -35,6 +36,37 @@ export default async function cycleCountRoutes(app: FastifyInstance) {
     const businessDate = await getCurrentBusinessDate();
     reply.send(await listTasksForDate(businessDate));
   });
+
+  // Section 10.2: schedule/assign — a manual counterpart to the daily
+  // auto-generator, for any date (today or upcoming), so the Owner can
+  // see what's already been scheduled before adding more.
+  app.get(
+    "/cycle-counts",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const query = z.object({ date: z.string().min(1) }).safeParse(req.query);
+      if (!query.success) return reply.code(400).send({ error: "invalid_query" });
+      reply.send(await listTasksForDate(query.data.date));
+    }
+  );
+
+  app.post(
+    "/cycle-counts/schedule",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const body = z
+        .object({
+          binIds: z.array(z.string().uuid()).min(1),
+          businessDate: z.string().min(1),
+          assignedTo: z.string().uuid().nullable().optional(),
+          deviceId: z.string().min(1),
+        })
+        .safeParse(req.body);
+      if (!body.success) return reply.code(400).send({ error: "invalid_body", details: body.error.flatten() });
+      const result = await scheduleManualCycleCountTasks(body.data.binIds, body.data.businessDate, body.data.assignedTo ?? null, body.data.deviceId);
+      reply.code(201).send(result);
+    }
+  );
 
   app.patch(
     "/cycle-counts/:id/assign",

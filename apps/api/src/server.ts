@@ -22,6 +22,7 @@ import reportRoutes from "./routes/reports.js";
 import requestRoutes from "./routes/requests.js";
 import purchaseOrderRoutes from "./routes/purchase-orders.js";
 import cycleCountRoutes from "./routes/cycle-counts.js";
+import coldChainRoutes from "./routes/cold-chain.js";
 import expiryAuditRoutes from "./routes/expiry-audit.js";
 import writeOffRoutes from "./routes/write-offs.js";
 import statutoryReportRoutes from "./routes/statutory-reports.js";
@@ -68,6 +69,7 @@ export function buildServer(): FastifyInstance {
   app.register(requestRoutes);
   app.register(purchaseOrderRoutes);
   app.register(cycleCountRoutes);
+  app.register(coldChainRoutes);
   app.register(expiryAuditRoutes);
   app.register(writeOffRoutes);
   app.register(statutoryReportRoutes);

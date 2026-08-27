@@ -67,6 +67,62 @@ export async function generateDailyCycleCountTasks(businessDate: string, created
   }
 }
 
+/**
+ * Section 10.2: "schedule/assign cycle counts" — a manual counterpart to
+ * the automatic daily selection above, for a specific bin (or bins) the
+ * Owner/Manager wants counted regardless of whether the four ranked
+ * pools would have picked it, on any date (today or a future one — the
+ * automatic generator only ever targets "today"). Reuses the exact same
+ * task/line/system-quantity-snapshot shape; the schema's
+ * `cycle_count_selection_reason` enum has carried a 'manual' value since
+ * M6 for exactly this, unused until now.
+ */
+export async function scheduleManualCycleCountTasks(
+  binIds: string[],
+  businessDate: string,
+  assignedTo: string | null,
+  deviceId: string
+): Promise<{ created: number; skipped: string[] }> {
+  const db = requirePool();
+  const { rows: existing } = await db.query(
+    `SELECT bin_id FROM cycle_count_tasks WHERE business_date = $1 AND bin_id = ANY($2::uuid[])`,
+    [businessDate, binIds]
+  );
+  const alreadyScheduled = new Set(existing.map((r) => r.bin_id));
+  const toCreate = binIds.filter((id) => !alreadyScheduled.has(id));
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    for (const binId of toCreate) {
+      const { rows: taskRows } = await client.query(
+        `INSERT INTO cycle_count_tasks (bin_id, business_date, selection_reason, assigned_to, device_id)
+         VALUES ($1,$2,'manual',$3,$4) RETURNING id`,
+        [binId, businessDate, assignedTo, deviceId]
+      );
+      const taskId = taskRows[0].id;
+
+      const { rows: stockRows } = await client.query(
+        `SELECT product_id, batch_id, quantity_base_units FROM stock WHERE bin_id = $1 AND quantity_base_units > 0`,
+        [binId]
+      );
+      for (const s of stockRows) {
+        await client.query(
+          `INSERT INTO cycle_count_lines (cycle_count_task_id, product_id, batch_id, system_quantity_base_units) VALUES ($1,$2,$3,$4)`,
+          [taskId, s.product_id, s.batch_id, s.quantity_base_units]
+        );
+      }
+    }
+    await client.query("COMMIT");
+    return { created: toCreate.length, skipped: binIds.filter((id) => alreadyScheduled.has(id)) };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function listTasksForDate(businessDate: string) {
   const { rows } = await requirePool().query(
     `SELECT t.*, b.code AS bin_code, u1.name AS assigned_to_name, u2.name AS counted_by_name
