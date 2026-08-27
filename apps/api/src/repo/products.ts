@@ -162,6 +162,17 @@ export async function findProductsBySubstituteGroup(substituteGroupId: string): 
   return rows;
 }
 
+// Section 10.2: "Barcode assignment and printable label sheet
+// generation." Same idea as bins' label sheet (M2) — this was the one
+// piece of the Product master bullet still missing.
+export async function listProductsForLabelSheet(ids?: string[]): Promise<Array<{ id: string; name: string; manufacturer: string; barcode: string | null }>> {
+  const { rows } = await requirePool().query(
+    `SELECT id, name, manufacturer, barcode FROM products WHERE status = 'active' ${ids && ids.length > 0 ? "AND id = ANY($1::uuid[])" : ""} ORDER BY name`,
+    ids && ids.length > 0 ? [ids] : []
+  );
+  return rows;
+}
+
 export async function createProduct(input: CreateProductInput): Promise<{ id: string }> {
   const db = requirePool();
   const client = await db.connect();

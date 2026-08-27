@@ -1,9 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { createProduct, findProductsBySubstituteGroup, getStockLocations, listProducts, updateProduct } from "../repo/products.js";
+import { createProduct, findProductsBySubstituteGroup, getStockLocations, listProducts, listProductsForLabelSheet, updateProduct } from "../repo/products.js";
 import { findOrCreateSalt } from "../repo/salts.js";
 import { substituteGroupKey } from "../domain/substitute-group.js";
 import { generateInternalBarcode } from "../domain/barcode.js";
+import { buildProductLabelSheetPdf } from "../domain/label-sheet.js";
+import {
+  listSubstituteGroups,
+  moveProductToGroup,
+  diffBulkProductImport,
+  commitBulkProductImport,
+  ProductMasterError,
+} from "../repo/product-master.js";
 
 const compositionSchema = z.object({
   saltId: z.string().uuid().optional(),
@@ -157,4 +165,70 @@ export default async function productRoutes(app: FastifyInstance) {
       reply.send({ id: paramsResult.data.id, updated: true });
     }
   );
+
+  // Section 10.2: "Manage substitute_group_id mappings — much easier on
+  // a big screen." The M2 value is auto-computed and has no override
+  // path — this is that override.
+  app.get(
+    "/products/substitute-groups",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (_req, reply) => {
+      reply.send(await listSubstituteGroups());
+    }
+  );
+
+  app.post(
+    "/products/:id/substitute-group",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      const body = z.object({ targetProductId: z.string().uuid().nullable(), note: z.string().min(1) }).safeParse(req.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
+      try {
+        reply.send(await moveProductToGroup(params.data.id, body.data.targetProductId, body.data.note, req.auth!.sub));
+      } catch (err) {
+        if (err instanceof ProductMasterError) return reply.code(409).send({ error: err.code });
+        throw err;
+      }
+    }
+  );
+
+  // Section 10.2: "Bulk CSV import of the product master with preview
+  // diff." See repo/product-master.ts for exactly what an update row can
+  // and can't touch.
+  app.post(
+    "/products/bulk-import/preview",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const body = z.object({ csv: z.string().min(1) }).safeParse(req.body);
+      if (!body.success) return reply.code(400).send({ error: "invalid_body" });
+      reply.send(await diffBulkProductImport(body.data.csv));
+    }
+  );
+
+  app.post(
+    "/products/bulk-import/commit",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const body = z.object({ csv: z.string().min(1) }).safeParse(req.body);
+      if (!body.success) return reply.code(400).send({ error: "invalid_body" });
+      reply.send(await commitBulkProductImport(body.data.csv, req.auth!.sub));
+    }
+  );
+
+  // Section 10.2: "Barcode assignment and printable label sheet
+  // generation (PDF download for A4 sticker stock)." ?ids=uuid,uuid or
+  // omit for every active product with a barcode assigned.
+  app.get("/products/label-sheet", { preHandler: app.authenticate }, async (req, reply) => {
+    const q = req.query as { ids?: string };
+    const products = await listProductsForLabelSheet(q.ids ? q.ids.split(",").filter(Boolean) : undefined);
+    const printable = products.filter((p) => p.barcode);
+    if (printable.length === 0) return reply.code(404).send({ error: "no_barcoded_products_matched" });
+
+    const pdfBytes = await buildProductLabelSheetPdf(products);
+    reply
+      .header("Content-Type", "application/pdf")
+      .header("Content-Disposition", `attachment; filename="product-labels.pdf"`)
+      .send(Buffer.from(pdfBytes));
+  });
 }
