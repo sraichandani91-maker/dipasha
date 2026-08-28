@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useAuth } from "../auth/AuthContext.js";
 import ItemHistoryModal from "./ItemHistoryModal.js";
+import ProductDetailModal from "./ProductDetailModal.js";
 
 interface SearchProduct {
   id: string;
@@ -66,17 +67,19 @@ export default function SearchBar({
 }) {
   const { user } = useAuth();
   const canViewHistory = user?.role === "owner" || user?.role === "store_manager";
+  const canEditProduct = user?.role === "owner" || user?.role === "store_manager";
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<SearchResponse | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<{ id: string; name: string } | null>(null);
+  const [detailsTargetId, setDetailsTargetId] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Section 5B's F4 item ledger: defaults to the exact-match product when
-  // one exists, else the first result of the first group — the same
-  // "top of the list" product a biller would otherwise just click.
-  function defaultHistoryTarget(): SearchProduct | null {
+  // Shared by F3 (details) and F4 (history): defaults to the exact-match
+  // product when one exists, else the first result of the first group —
+  // the same "top of the list" product a biller would otherwise just click.
+  function defaultTargetProduct(): SearchProduct | null {
     if (!result) return null;
     const allProducts = result.groups.flatMap((g) => g.products);
     if (result.exactProductId) {
@@ -121,15 +124,25 @@ export default function SearchBar({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key !== "F4" || !canViewHistory) return;
-          e.preventDefault();
-          const target = defaultHistoryTarget();
-          if (target) openHistory(target);
+          if (e.key === "F3") {
+            e.preventDefault();
+            const target = defaultTargetProduct();
+            if (target) setDetailsTargetId(target.id);
+            return;
+          }
+          if (e.key === "F4" && canViewHistory) {
+            e.preventDefault();
+            const target = defaultTargetProduct();
+            if (target) openHistory(target);
+          }
         }}
         autoFocus={autoFocus}
       />
-      {canViewHistory && result && result.groups.length > 0 && (
-        <p className="hint-text" style={{ margin: "4px 0 0" }}>Press F4, or click "History", to see a medicine's past sales and purchases.</p>
+      {result && result.groups.length > 0 && (
+        <p className="hint-text" style={{ margin: "4px 0 0" }}>
+          Press F3, or click "Details", to see (and {canEditProduct ? "edit " : ""}) a medicine's full details.
+          {canViewHistory && <> Press F4, or click "History", for its past sales and purchases.</>}
+        </p>
       )}
       {loading && <p className="hint-text">Searching…</p>}
       {result && result.groups.length === 0 && (
@@ -198,6 +211,13 @@ export default function SearchBar({
                             + Request book
                           </button>
                         )}
+                        <button
+                          className="btn-secondary"
+                          style={{ marginTop: 4, fontSize: 11, padding: "4px 8px" }}
+                          onClick={(e) => { e.stopPropagation(); setDetailsTargetId(p.id); }}
+                        >
+                          Details
+                        </button>
                         {canViewHistory && (
                           <button
                             className="btn-secondary"
@@ -218,6 +238,9 @@ export default function SearchBar({
       )}
       {historyTarget && (
         <ItemHistoryModal productId={historyTarget.id} productName={historyTarget.name} onClose={() => setHistoryTarget(null)} />
+      )}
+      {detailsTargetId && (
+        <ProductDetailModal productId={detailsTargetId} canEdit={canEditProduct} onClose={() => setDetailsTargetId(null)} />
       )}
     </div>
   );
