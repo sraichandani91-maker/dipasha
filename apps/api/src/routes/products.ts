@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { createProduct, findProductsBySubstituteGroup, getStockLocations, listProducts, listProductsForLabelSheet, updateProduct } from "../repo/products.js";
+import { createProduct, findProductsBySubstituteGroup, getProductDetail, getStockLocations, listProducts, listProductsForLabelSheet, updateProduct } from "../repo/products.js";
 import { getProductHistory } from "../repo/product-history.js";
 import { findOrCreateSalt } from "../repo/salts.js";
 import { substituteGroupKey } from "../domain/substitute-group.js";
@@ -43,9 +43,19 @@ const createProductSchema = z.object({
 const updateProductSchema = z.object({
   name: z.string().min(1).optional(),
   manufacturer: z.string().min(1).optional(),
-  barcode: z.string().min(1).nullable().optional(),
+  form: z.string().min(1).optional(),
+  scheduleCategory: z.enum(["OTC", "H", "H1", "X", "Ayurvedic", "Cosmetic", "Device"]).optional(),
+  requiresPrescription: z.boolean().optional(),
+  hsnCode: z.string().min(1).optional(),
+  gstRate: z.number().min(0).max(28).optional(),
+  baseUnit: z.string().min(1).optional(),
+  packSize: z.number().int().positive().optional(),
+  outerPackSize: z.number().int().positive().nullable().optional(),
   allowLooseSale: z.boolean().optional(),
   looseSaleMarkupPercent: z.number().min(0).optional(),
+  isColdChain: z.boolean().optional(),
+  barcode: z.string().min(1).nullable().optional(),
+  compositions: z.array(compositionSchema).min(1).optional(),
   status: z.enum(["active", "pending", "inactive"]).optional(),
 });
 
@@ -75,6 +85,19 @@ export default async function productRoutes(app: FastifyInstance) {
         }),
       }))
     );
+  });
+
+  // Section 5B's F3 item-details lookup (owner-requested) — the full
+  // product master record (pack size, composition, GST, etc.), open to
+  // every authenticated role the same as the list endpoint above: none
+  // of these fields carry cost/margin data, so nothing here intersects
+  // the Owner-only rules. Editing (PATCH below) stays Owner/store_manager.
+  app.get("/products/:id", { preHandler: app.authenticate }, async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+    const detail = await getProductDetail(params.data.id);
+    if (!detail) return reply.code(404).send({ error: "not_found" });
+    reply.send(detail);
   });
 
   // Section 9's write-off form (and anything else that needs "which
@@ -175,10 +198,39 @@ export default async function productRoutes(app: FastifyInstance) {
       if (!paramsResult.success) return reply.code(400).send({ error: "invalid_id" });
       const parsed = updateProductSchema.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
+      const body = parsed.data;
 
-      const updated = await updateProduct(paramsResult.data.id, parsed.data);
+      let resolvedCompositions: Array<{ saltId: string; strength: string }> | undefined;
+      let substituteGroupId: string | undefined;
+
+      // Composition and form are both inputs to the substitute-group key
+      // (Section 6B.2) — editing either one without recomputing it would
+      // leave the group index quietly wrong, the exact staleness M13.4's
+      // manual-override screen exists to let an owner fix by hand, not
+      // something this endpoint should be causing on every edit.
+      if (body.compositions || body.form) {
+        const current = await getProductDetail(paramsResult.data.id);
+        if (!current) return reply.code(404).send({ error: "not_found" });
+
+        if (body.compositions) {
+          resolvedCompositions = [];
+          for (const c of body.compositions) {
+            const salt = c.saltId ? { id: c.saltId } : await findOrCreateSalt(c.saltName!);
+            resolvedCompositions.push({ saltId: salt.id, strength: c.strength });
+          }
+        } else {
+          resolvedCompositions = current.compositions.map((c) => ({ saltId: c.saltId, strength: c.strength }));
+        }
+        substituteGroupId = substituteGroupKey(resolvedCompositions, body.form ?? current.form);
+      }
+
+      const updated = await updateProduct(paramsResult.data.id, {
+        ...body,
+        compositions: resolvedCompositions,
+        substituteGroupId,
+      });
       if (!updated) return reply.code(404).send({ error: "not_found_or_no_changes" });
-      reply.send({ id: paramsResult.data.id, updated: true });
+      reply.send({ id: paramsResult.data.id, updated: true, substituteGroupId });
     }
   );
 
