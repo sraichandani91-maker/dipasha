@@ -14,3 +14,9 @@ pgdata/
 caddy_data/
 caddy_config/
 apps/api/uploads/
+
+# scripts/backup.sh's output — real database dumps and prescription
+# photo archives never belong in git.
+backups/
+uploads-restore-test/
+scripts/.uptime-state
