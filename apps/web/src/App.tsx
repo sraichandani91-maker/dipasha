@@ -29,12 +29,13 @@ import StaffPage from "./pages/StaffPage.js";
 import InventoryPage from "./pages/InventoryPage.js";
 import SettingsPage from "./pages/SettingsPage.js";
 import WhatsAppInboxPage from "./pages/WhatsAppInboxPage.js";
+import ChronicPage from "./pages/ChronicPage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
   | "cycle-counts" | "cold-chain" | "expiry-audit" | "write-offs" | "reports"
   | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
-  | "delivery-orders" | "pick-pack" | "rider" | "staff" | "inventory" | "settings" | "whatsapp-inbox";
+  | "delivery-orders" | "pick-pack" | "rider" | "staff" | "inventory" | "settings" | "whatsapp-inbox" | "chronic";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -100,6 +101,9 @@ export default function App() {
           )}
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "prescribers" ? "active" : ""} onClick={() => setTab("prescribers")}>Prescribers</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "chronic" ? "active" : ""} onClick={() => setTab("chronic")}>Chronic patients</button>
           )}
           {user.role === "owner" && (
             <button className={tab === "margins" ? "active" : ""} onClick={() => setTab("margins")}>Margins</button>
@@ -168,6 +172,7 @@ export default function App() {
             {tab === "write-offs" && <WriteOffsPage />}
             {tab === "reports" && <ReportsPage />}
             {tab === "prescribers" && <PrescribersPage />}
+            {tab === "chronic" && <ChronicPage />}
             {tab === "margins" && <MarginReportsPage />}
             {tab === "customers" && <CustomersPage />}
             {tab === "vendor-comparison" && <VendorComparisonPage />}
