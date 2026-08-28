@@ -16,6 +16,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.121.0",
     "@fastify/multipart": "^10.1.1",
+    "@sentry/node": "^10.71.0",
     "fastify": "^5.1.0",
     "fastify-plugin": "^5.0.1",
     "jsonwebtoken": "^9.0.2",

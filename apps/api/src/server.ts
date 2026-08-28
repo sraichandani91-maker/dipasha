@@ -1,7 +1,8 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import multipart from "@fastify/multipart";
 import { config } from "./config.js";
 import { pingDatabase } from "./db.js";
+import { captureException } from "./lib/error-tracking.js";
 import authPlugin from "./plugins/auth.js";
 import activityLogPlugin from "./plugins/activity-log.js";
 import authRoutes from "./routes/auth.js";
@@ -52,6 +53,26 @@ export function buildServer(): FastifyInstance {
           ? { target: "pino-pretty" }
           : undefined,
     },
+  });
+
+  // Section 12B.4 / M16: every unhandled route error passes through here
+  // exactly once — a genuine 5xx (a bug, not a validation rejection) is
+  // reported to Sentry and logged at error level; anything Fastify/Zod
+  // already classified below 500 (bad input, auth failures, the 400s
+  // routes return deliberately) is left alone, since those are expected
+  // traffic, not "silent failures accumulating unnoticed." Stack traces
+  // never reach the client outside development — a bug being fixable is
+  // not the same as a bug being safe to expose to whoever is calling the API.
+  app.setErrorHandler((err: FastifyError, req, reply) => {
+    const statusCode = err.statusCode ?? 500;
+    if (statusCode >= 500) {
+      req.log.error({ err, reqId: req.id }, "unhandled route error");
+      captureException(err, { reqId: req.id, method: req.method, url: req.url });
+    }
+    reply.code(statusCode).send({
+      error: statusCode >= 500 ? "internal_server_error" : (err.code ?? "bad_request"),
+      message: statusCode >= 500 && config.nodeEnv === "production" ? "Something went wrong." : err.message,
+    });
   });
 
   app.register(multipart, { limits: { fileSize: config.maxUploadBytes } });

@@ -5,6 +5,9 @@ import { processPendingNotifications } from "./domain/notifications.js";
 import { generateDailyReportIfDue } from "./repo/reports.js";
 import { sendDueRefillReminders } from "./repo/chronic.js";
 import { sendFinancialDailyDigestIfDue } from "./repo/financial-summary.js";
+import { initErrorTracking, captureException, flushErrorTracking } from "./lib/error-tracking.js";
+
+initErrorTracking();
 
 // Fail fast and loud, not on the first login attempt in front of a
 // customer. A blank JWT_SECRET would otherwise sign every token with an
@@ -13,6 +16,25 @@ if (config.nodeEnv === "production" && !config.jwtSecret) {
   console.error("JWT_SECRET is not set. Refusing to start in production. See .env.example.");
   process.exit(1);
 }
+
+// Section 12B.4: "so silent failures do not accumulate unnoticed." A
+// crash outside a request (a bad poller tick that somehow escapes its own
+// `.catch`, a genuine Node-level bug) would otherwise vanish with nothing
+// but a stack trace in a log file nobody's tailing — reported to Sentry
+// (a no-op if unconfigured, see lib/error-tracking.ts) and the process
+// still exits, since continuing after an uncaught exception risks running
+// in a corrupted state; a process manager (Docker's `restart:
+// unless-stopped`, per docker-compose.yml) brings it back.
+process.on("uncaughtException", (err) => {
+  console.error("uncaughtException", err);
+  captureException(err);
+  void flushErrorTracking().finally(() => process.exit(1));
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("unhandledRejection", reason);
+  captureException(reason);
+  void flushErrorTracking().finally(() => process.exit(1));
+});
 
 const app = buildServer();
 

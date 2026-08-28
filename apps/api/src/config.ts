@@ -27,4 +27,13 @@ export const config = {
   // than one API instance, since local disk won't survive a redeploy.
   uploadDir: process.env.UPLOAD_DIR ?? "./uploads",
   maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES ?? 8 * 1024 * 1024),
+
+  // M16 / Section 12B.4 error tracking. No Sentry (or equivalent) project
+  // exists yet — that account is the owner's to create, same "real
+  // provider, pluggable interface, honest no-op until credentialed" story
+  // as WhatsApp/OTP above. `lib/error-tracking.ts` no-ops entirely when
+  // this is unset, so leaving it blank is a safe, supported state, not a
+  // half-finished one.
+  sentryDsn: process.env.SENTRY_DSN ?? "",
+  releaseVersion: process.env.RELEASE_VERSION ?? "dev",
 };
