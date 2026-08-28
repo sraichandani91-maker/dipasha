@@ -1,6 +1,6 @@
 # Runbook — deploying and operating Dipasha OS
 
-Written so you can deploy this without me. Backup/restore and monitoring are built out properly in M16 — everything below is the minimum to get the API and web console reachable over HTTPS on one subdomain.
+Written so you can deploy this without me.
 
 ## What you're responsible for (Section 14)
 
@@ -74,6 +74,42 @@ Open http://localhost:5173.
 - Run a migration by hand: `docker compose exec api npm run migrate:up --workspace apps/api`
 - Roll back the last migration: `docker compose exec api npm run migrate:down --workspace apps/api`
 
-## What's deliberately not here yet
+## Backups (Section 12B.3 — "treat as the highest priority item")
 
-Automated backups, restore testing, uptime alerting to WhatsApp, and error tracking are Milestone 16 (Section 12B.3–12B.4). Until then, treat this VPS's Postgres volume as **not backed up** — don't put real shop data on it before M16, or take a manual `docker compose exec postgres pg_dump` before anything you'd be upset to lose.
+`scripts/backup.sh` dumps Postgres (via `pg_dump "$DATABASE_URL"` — this is why the Postgres port stays bound to `127.0.0.1:5432` in `docker-compose.yml` even in production, so a host-level cron job can reach it) and archives the uploads directory (prescription/write-off/expense photos), both gzipped into `./backups` with a UTC timestamp, and prunes anything older than `BACKUP_RETENTION_DAYS` (default 30).
+
+Run it daily via cron:
+```
+crontab -e
+# add:
+0 2 * * * cd /path/to/dipasha && ./scripts/backup.sh >> /var/log/dipasha-backup.log 2>&1
+```
+
+**Off-server storage.** No object storage account exists yet (Section 14 — yours to buy). Once you have one, install `rclone` (`apt install rclone`), run `rclone config` once to point it at your provider, and set `BACKUP_RCLONE_REMOTE=remotename:bucket/path` in `.env` — `backup.sh` picks it up automatically on the next run. Until then, every run prints a loud warning that backups are sitting on the same disk as the data they protect, which is real risk, not a formality — the VPS itself is the single point of failure until this is set.
+
+**A backup that's never been restored is not a backup.** Test it now, and periodically after:
+```
+./scripts/restore.sh backups/dipasha-db-<timestamp>.sql.gz backups/dipasha-uploads-<timestamp>.tar.gz
+```
+This restores into a throwaway `dipasha_restore_test` database (never the live one — safe to run on production), checks the `settings` table actually has rows, and extracts the uploads archive into `./uploads-restore-test` without touching the real uploads directory. Drop the test database when done (the script prints the exact command). Time the whole thing at least once and write the duration down somewhere you'll find it during a real incident.
+
+**One-time prerequisite on the VPS**: `apt install postgresql-client` (for `pg_dump`/`psql` — Postgres itself stays in Docker; only the client tools need to be on the host).
+
+## Uptime + backup-freshness monitoring (Section 12B.3–12B.4)
+
+Two more cron scripts, both alerting over WhatsApp (falls back to a log line if `WHATSAPP_ALERT_PHONE` or real Meta Cloud API credentials aren't set yet — same honest-fallback story as every other unconfigured integration in this build):
+
+```
+crontab -e
+# add:
+*/5 * * * * cd /path/to/dipasha && ./scripts/uptime-check.sh >> /var/log/dipasha-uptime.log 2>&1
+0 9 * * 1   cd /path/to/dipasha && ./scripts/backup-freshness-check.sh >> /var/log/dipasha-backup-check.log 2>&1
+```
+
+`uptime-check.sh` hits `/api/health` and alerts only on a state *change* (down, then recovered) — not on every failed tick, or a real outage would flood you with a message every 5 minutes for as long as it lasts. `backup-freshness-check.sh` runs weekly and alerts if the latest backup is missing, zero-byte, or older than `BACKUP_FRESHNESS_MAX_AGE_HOURS` (default 48h) — this is what actually catches "the daily backup cron silently stopped running three weeks ago," which `backup.sh` succeeding on the day it succeeds can never catch on its own.
+
+Set `WHATSAPP_ALERT_PHONE` and, once you have a real WhatsApp Business Cloud API account (Section 14), `WHATSAPP_CLOUD_API_TOKEN` + `WHATSAPP_CLOUD_API_PHONE_NUMBER_ID` in `.env`.
+
+## Error tracking (Section 12B.4)
+
+Sign up at sentry.io (or self-host GlitchTip, which speaks the same protocol), create two projects (Node for the API, React for the web console), and set `SENTRY_DSN` (API) and `VITE_SENTRY_DSN` (web) in `.env`. The web console's DSN is baked into the static bundle at `docker compose build` time, not read at container startup — changing it needs a rebuild (`./deploy.sh` already does this on every deploy). Leave both unset and error tracking is a complete no-op; nothing breaks, you just won't be alerted to a crash until someone tells you about it.
