@@ -77,6 +77,12 @@ export interface DailyReportPayload {
   coldChainOutOfRange: boolean;
 }
 
+// Section 12A.4's shared inbox reply — free text a staff member typed,
+// sent verbatim (no template, see repo/whatsapp-inbound.ts for why).
+export interface InboxReplyPayload {
+  body: string;
+}
+
 export function buildWhatsAppText(triggerType: string, payload: Record<string, unknown>): string {
   switch (triggerType) {
     case "bill_generated":
@@ -95,6 +101,8 @@ export function buildWhatsAppText(triggerType: string, payload: Record<string, u
       return buildOrderDeliveredText(payload as unknown as OrderDeliveredPayload);
     case "daily_report":
       return buildDailyReportText(payload as unknown as DailyReportPayload);
+    case "inbox_reply":
+      return (payload as unknown as InboxReplyPayload).body;
     default:
       throw new Error(`No WhatsApp message builder for trigger type "${triggerType}"`);
   }

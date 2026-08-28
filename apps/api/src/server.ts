@@ -24,6 +24,7 @@ import purchaseOrderRoutes from "./routes/purchase-orders.js";
 import cycleCountRoutes from "./routes/cycle-counts.js";
 import coldChainRoutes from "./routes/cold-chain.js";
 import settingsRoutes from "./routes/settings.js";
+import whatsappInboundRoutes from "./routes/whatsapp-inbound.js";
 import expiryAuditRoutes from "./routes/expiry-audit.js";
 import writeOffRoutes from "./routes/write-offs.js";
 import statutoryReportRoutes from "./routes/statutory-reports.js";
@@ -72,6 +73,7 @@ export function buildServer(): FastifyInstance {
   app.register(cycleCountRoutes);
   app.register(coldChainRoutes);
   app.register(settingsRoutes);
+  app.register(whatsappInboundRoutes);
   app.register(expiryAuditRoutes);
   app.register(writeOffRoutes);
   app.register(statutoryReportRoutes);
