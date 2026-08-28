@@ -83,6 +83,15 @@ export interface InboxReplyPayload {
   body: string;
 }
 
+// Section 9A.3/12A.2's refill reminder — deliberately NOT phrased as
+// medical advice ("your regular item is due", not a dosage instruction),
+// per the spec's own explicit rule.
+export interface RefillReminderPayload {
+  customerName: string;
+  productName: string;
+  exhaustionDate: string; // ISO date
+}
+
 export function buildWhatsAppText(triggerType: string, payload: Record<string, unknown>): string {
   switch (triggerType) {
     case "bill_generated":
@@ -103,6 +112,8 @@ export function buildWhatsAppText(triggerType: string, payload: Record<string, u
       return buildDailyReportText(payload as unknown as DailyReportPayload);
     case "inbox_reply":
       return (payload as unknown as InboxReplyPayload).body;
+    case "refill_reminder":
+      return buildRefillReminderText(payload as unknown as RefillReminderPayload);
     default:
       throw new Error(`No WhatsApp message builder for trigger type "${triggerType}"`);
   }
@@ -208,5 +219,17 @@ function buildDailyReportText(p: DailyReportPayload): string {
     ...(flags.length > 0 ? ["", "Needs attention:", ...flags.map((f) => `- ${f}`)] : []),
     ``,
     `Full detail in the console under Reports.`,
+  ].join("\n");
+}
+
+// Section 9A.3: "Do not phrase reminders as medical advice. A neutral
+// 'your regular item is due' is right; anything resembling dosage
+// guidance is not." — deliberately doesn't name a dose or frequency.
+function buildRefillReminderText(p: RefillReminderPayload): string {
+  const date = new Date(p.exhaustionDate).toLocaleDateString("en-IN");
+  return [
+    `Hi ${p.customerName}, your regular item "${p.productName}" from Dipasha Medical Store is due for a refill around ${date}.`,
+    ``,
+    `Reply to this message or call the store to order, or visit anytime.`,
   ].join("\n");
 }

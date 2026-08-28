@@ -3,6 +3,7 @@ import { allocateFefo, getSpecificBatchStock, InsufficientStockError } from "../
 import { billSeriesPrefix, reserveNumber } from "../domain/bill-numbering.js";
 import { findOrCreateCustomer } from "./customers.js";
 import { enqueueNotification } from "../domain/notifications.js";
+import { recomputeChronicFromHistory } from "./chronic.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -338,6 +339,19 @@ export async function createSale(input: CreateSaleInput) {
         `UPDATE customer_requests SET status = 'fulfilled', fulfilled_sale_id = $1, updated_at = now() WHERE id = $2`,
         [sale.id, input.fulfillsRequestId]
       );
+    }
+
+    // Section 9A.3: a completed sale is the real signal a chronic refill
+    // cycle restarted — recomputed from this same transaction's own
+    // sale_lines rows, so a chronic customer's exhaustion date is never
+    // more than one purchase stale. No-ops for every product that isn't
+    // flagged chronic for this customer, so this costs nothing on the
+    // overwhelming majority of ordinary sales.
+    if (customer) {
+      const distinctProductIds = [...new Set(subLines.map((sub) => sub.productId))];
+      for (const productId of distinctProductIds) {
+        await recomputeChronicFromHistory(client, customer.id, productId);
+      }
     }
 
     // Section 12A.2: "sends immediately on bill save, if the phone number

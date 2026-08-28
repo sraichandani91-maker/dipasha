@@ -21,7 +21,7 @@ export interface CreateRequestInput {
   note: string | null;
   loggedBy: string;
   deviceId: string;
-  source: "app" | "web" | "web_manual";
+  source: "app" | "web" | "web_manual" | "automated";
 }
 
 // Section 6B.1: three cases. Known-SKU-in-stock is flagged back to the

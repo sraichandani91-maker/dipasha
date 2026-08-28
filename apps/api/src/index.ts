@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { pool } from "./db.js";
 import { processPendingNotifications } from "./domain/notifications.js";
 import { generateDailyReportIfDue } from "./repo/reports.js";
+import { sendDueRefillReminders } from "./repo/chronic.js";
 
 // Fail fast and loud, not on the first login attempt in front of a
 // customer. A blank JWT_SECRET would otherwise sign every token with an
@@ -39,10 +40,20 @@ const dailyReportInterval = config.databaseUrl
     }, DAILY_REPORT_POLL_INTERVAL_MS)
   : null;
 
+// Section 9A.3's refill reminders — date-granular like the daily
+// report, not minute-granular, so the same coarse interval is fine.
+const REFILL_REMINDER_POLL_INTERVAL_MS = 5 * 60_000;
+const refillReminderInterval = config.databaseUrl
+  ? setInterval(() => {
+      sendDueRefillReminders(app.log).catch((err) => app.log.error(err, "refill reminder tick failed"));
+    }, REFILL_REMINDER_POLL_INTERVAL_MS)
+  : null;
+
 async function shutdown(signal: string) {
   app.log.info({ signal }, "shutting down");
   if (notificationInterval) clearInterval(notificationInterval);
   if (dailyReportInterval) clearInterval(dailyReportInterval);
+  if (refillReminderInterval) clearInterval(refillReminderInterval);
   await app.close();
   await pool?.end();
   process.exit(0);
