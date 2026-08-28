@@ -95,3 +95,57 @@ function escapeHtml(s: string | null | undefined): string {
   if (!s) return "";
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
+
+/**
+ * The purchase-invoice counterpart to `buildReceiptHtml`, opened the same
+ * way (a fresh browser window, view-only) — from the item-history modal's
+ * "click a purchase entry" action (Section 5B's F4 item ledger). A4-ish
+ * layout since this is a supplier-facing/audit document, not a thermal
+ * receipt.
+ */
+export function buildPurchaseInvoiceHtml(detail: { invoice: any; lines: any[] }): string {
+  const inv = detail.invoice;
+  const rows = detail.lines
+    .map(
+      (l: any) => `
+      <tr>
+        <td>${escapeHtml(l.product_name)}<br><span class="meta">Batch ${escapeHtml(l.batch_no)} · Exp ${formatMonthYear(l.expiry_date)}</span></td>
+        <td class="num">${l.quantity_base_units}${Number(l.free_quantity_base_units) > 0 ? ` (+${l.free_quantity_base_units} free)` : ""}</td>
+        <td class="num">₹${Number(l.rate_before_discount).toFixed(2)}</td>
+        <td class="num">${l.gst_rate}%</td>
+        <td class="num">₹${Number(l.line_total).toFixed(2)}</td>
+      </tr>`
+    )
+    .join("");
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>${escapeHtml(inv.invoice_number)}</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 24px; color: #000; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .meta { font-size: 11px; color: #333; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 12px; }
+  td, th { padding: 5px 4px; border-bottom: 1px solid #ccc; vertical-align: top; text-align: left; }
+  .num { text-align: right; white-space: nowrap; }
+  .row { display: flex; justify-content: space-between; font-size: 13px; margin: 3px 0; }
+  .total { font-size: 16px; font-weight: bold; border-top: 1px solid #000; padding-top: 6px; margin-top: 6px; }
+</style></head>
+<body>
+  <h1>Purchase invoice ${escapeHtml(inv.invoice_number)}</h1>
+  <p class="meta">Vendor: <b>${escapeHtml(inv.vendor_name)}</b>${inv.vendor_gstin ? ` (GSTIN ${escapeHtml(inv.vendor_gstin)})` : ""}<br>
+    Invoice date: ${new Date(inv.invoice_date).toLocaleDateString("en-IN")} · entered ${escapeHtml(inv.entry_method)}</p>
+
+  <table>
+    <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">GST</th><th class="num">Amt</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+
+  <div style="margin-top:12px">
+    <div class="row"><span>Taxable value</span><span>₹${Number(inv.taxable_value_total).toFixed(2)}</span></div>
+    <div class="row"><span>Tax</span><span>₹${Number(inv.tax_total).toFixed(2)}</span></div>
+    ${Number(inv.bill_level_discount) > 0 ? `<div class="row"><span>Bill discount</span><span>-₹${Number(inv.bill_level_discount).toFixed(2)}</span></div>` : ""}
+    ${Number(inv.freight_and_charges) > 0 ? `<div class="row"><span>Freight/charges</span><span>₹${Number(inv.freight_and_charges).toFixed(2)}</span></div>` : ""}
+    <div class="row total"><span>Net payable</span><span>₹${Number(inv.net_payable_computed).toFixed(2)}</span></div>
+  </div>
+</body></html>`;
+}

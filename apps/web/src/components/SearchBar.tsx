@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
+import { useAuth } from "../auth/AuthContext.js";
+import ItemHistoryModal from "./ItemHistoryModal.js";
 
 interface SearchProduct {
   id: string;
@@ -62,11 +64,31 @@ export default function SearchBar({
   onRequestBook?: (product: SearchProduct) => void;
   autoFocus?: boolean;
 }) {
+  const { user } = useAuth();
+  const canViewHistory = user?.role === "owner" || user?.role === "store_manager";
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<SearchResponse | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
+  const [historyTarget, setHistoryTarget] = useState<{ id: string; name: string } | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Section 5B's F4 item ledger: defaults to the exact-match product when
+  // one exists, else the first result of the first group — the same
+  // "top of the list" product a biller would otherwise just click.
+  function defaultHistoryTarget(): SearchProduct | null {
+    if (!result) return null;
+    const allProducts = result.groups.flatMap((g) => g.products);
+    if (result.exactProductId) {
+      const exact = allProducts.find((p) => p.id === result.exactProductId);
+      if (exact) return exact;
+    }
+    return allProducts[0] ?? null;
+  }
+
+  function openHistory(p: SearchProduct) {
+    setHistoryTarget({ id: p.id, name: p.name });
+  }
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -98,8 +120,17 @@ export default function SearchBar({
         placeholder="Search brand, salt, manufacturer, or scan a barcode…"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key !== "F4" || !canViewHistory) return;
+          e.preventDefault();
+          const target = defaultHistoryTarget();
+          if (target) openHistory(target);
+        }}
         autoFocus={autoFocus}
       />
+      {canViewHistory && result && result.groups.length > 0 && (
+        <p className="hint-text" style={{ margin: "4px 0 0" }}>Press F4, or click "History", to see a medicine's past sales and purchases.</p>
+      )}
       {loading && <p className="hint-text">Searching…</p>}
       {result && result.groups.length === 0 && (
         <p className="hint-text">No matches — this search has been logged and feeds the request book.</p>
@@ -167,6 +198,15 @@ export default function SearchBar({
                             + Request book
                           </button>
                         )}
+                        {canViewHistory && (
+                          <button
+                            className="btn-secondary"
+                            style={{ marginTop: 4, fontSize: 11, padding: "4px 8px" }}
+                            onClick={(e) => { e.stopPropagation(); openHistory(p); }}
+                          >
+                            History
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -175,6 +215,9 @@ export default function SearchBar({
             );
           })}
         </div>
+      )}
+      {historyTarget && (
+        <ItemHistoryModal productId={historyTarget.id} productName={historyTarget.name} onClose={() => setHistoryTarget(null)} />
       )}
     </div>
   );
