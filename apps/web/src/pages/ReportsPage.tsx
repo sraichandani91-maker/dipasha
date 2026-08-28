@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { api, downloadFile } from "../api.js";
+import { api, ApiError, downloadFile } from "../api.js";
+import { useAuth } from "../auth/AuthContext.js";
 
-type Tab = "registers" | "gstr1" | "gstr3b" | "traceability" | "inventory" | "exceptions" | "sync-conflicts" | "manual-overrides";
+type Tab = "dashboard" | "registers" | "gstr1" | "gstr3b" | "traceability" | "inventory" | "exceptions" | "sync-conflicts" | "manual-overrides" | "daily-reports" | "sql-console";
 
 function defaultRange() {
   const now = new Date();
@@ -19,30 +20,40 @@ const DISCLAIMER = "Working file for your accountant's review — computed from 
  * (10A.6): these are working files for a human to review, not
  * filing-ready output.
  */
+const RANGE_TABS: Tab[] = ["registers", "gstr1", "gstr3b"];
+
 export default function ReportsPage() {
-  const [tab, setTab] = useState<Tab>("registers");
+  const { user } = useAuth();
+  const isOwner = user?.role === "owner";
+  const [tab, setTab] = useState<Tab>("dashboard");
   const [range, setRange] = useState(defaultRange());
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Statutory reports</h2>
-      <p className="hint-text" style={{ background: "color-mix(in srgb, var(--status-warn) 10%, white)", padding: 8, borderRadius: 6 }}>{DISCLAIMER}</p>
+      <h2 style={{ marginTop: 0 }}>Reports</h2>
 
       <div style={{ display: "flex", gap: 4, marginBottom: 12, flexWrap: "wrap" }}>
         {([
+          ["dashboard", "Dashboard"],
           ["registers", "Registers"], ["gstr1", "GSTR-1"], ["gstr3b", "GSTR-3B"],
           ["traceability", "Batch traceability"], ["inventory", "Location-wise inventory"], ["exceptions", "Negative stock"],
-          ["sync-conflicts", "Sync conflicts"], ["manual-overrides", "Manual overrides"],
+          ["sync-conflicts", "Sync conflicts"], ["manual-overrides", "Manual overrides"], ["daily-reports", "Daily reports"],
+          ...(isOwner ? ([["sql-console", "SQL console"]] as Array<[Tab, string]>) : []),
         ] as Array<[Tab, string]>).map(([key, label]) => (
           <button key={key} className={tab === key ? "btn-primary" : "btn-secondary"} onClick={() => setTab(key)}>{label}</button>
         ))}
       </div>
 
-      {tab !== "traceability" && tab !== "inventory" && tab !== "exceptions" && tab !== "sync-conflicts" && tab !== "manual-overrides" && (
-        <div className="card" style={{ marginBottom: 12, display: "flex", gap: 12, alignItems: "flex-end" }}>
-          <div className="field"><label>From</label><input type="date" value={range.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} /></div>
-          <div className="field"><label>To</label><input type="date" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} /></div>
-        </div>
+      {tab === "dashboard" && <DashboardTab />}
+
+      {RANGE_TABS.includes(tab) && (
+        <>
+          <p className="hint-text" style={{ background: "color-mix(in srgb, var(--status-warn) 10%, white)", padding: 8, borderRadius: 6 }}>{DISCLAIMER}</p>
+          <div className="card" style={{ marginBottom: 12, display: "flex", gap: 12, alignItems: "flex-end" }}>
+            <div className="field"><label>From</label><input type="date" value={range.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} /></div>
+            <div className="field"><label>To</label><input type="date" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} /></div>
+          </div>
+        </>
       )}
 
       {tab === "registers" && <RegistersTab range={range} />}
@@ -53,6 +64,136 @@ export default function ReportsPage() {
       {tab === "exceptions" && <ExceptionsTab />}
       {tab === "sync-conflicts" && <SyncConflictsTab />}
       {tab === "manual-overrides" && <ManualOverridesTab />}
+      {tab === "daily-reports" && <DailyReportsTab />}
+      {tab === "sql-console" && isOwner && <SqlConsoleTab />}
+    </div>
+  );
+}
+
+function StatTile({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {
+  return (
+    <div className="card" style={{ minWidth: 160, background: warn ? "color-mix(in srgb, var(--status-warn, orange) 12%, white)" : undefined }}>
+      <div className="hint-text">{label}</div>
+      <div style={{ fontSize: "1.6em", fontWeight: 700 }}>{value}</div>
+    </div>
+  );
+}
+
+/**
+ * Section 10.2's prebuilt dashboard — "today," computed live, no
+ * separate maintenance. Same DailySummary shape the daily auto-report
+ * snapshots once a day for the record.
+ */
+function DashboardTab() {
+  const [data, setData] = useState<any>(null);
+  async function load() {
+    setData(await api.get("/reports/dashboard"));
+  }
+  useEffect(() => { load(); }, []);
+  if (!data) return <div>Loading…</div>;
+
+  return (
+    <div>
+      <p className="hint-text">Today ({new Date(data.businessDate).toLocaleDateString("en-IN")}), computed live.</p>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <StatTile label="Sales today" value={`₹${data.salesTotal.toFixed(2)}`} />
+        <StatTile label="Bills today" value={data.billCount} />
+        <StatTile label="Delivery orders in progress" value={data.pendingDeliveryOrders} />
+        <StatTile label="Put-away pending" value={data.pendingPutawayTasks} />
+        <StatTile label="Cycle counts pending/awaiting review" value={data.openCycleCountTasks} />
+        <StatTile label="Write-offs awaiting approval" value={data.pendingWriteOffApprovals} warn={data.pendingWriteOffApprovals > 0} />
+        <StatTile label="Cold chain" value={data.coldChainOutOfRange ? "Out of range" : data.coldChainHasGap ? "Reading overdue" : "OK"} warn={data.coldChainOutOfRange || data.coldChainHasGap} />
+      </div>
+      <button className="btn-secondary" style={{ marginTop: 12 }} onClick={load}>Refresh</button>
+    </div>
+  );
+}
+
+/** Snapshots of computeDailySummary, frozen once per business date by the
+ * server-side poller (Section 10.2's "daily auto-report") — a history of
+ * what the dashboard looked like at each day's close, not a live query. */
+function DailyReportsTab() {
+  const [rows, setRows] = useState<any[] | null>(null);
+  useEffect(() => { api.get("/reports/daily-reports").then(setRows); }, []);
+
+  return (
+    <div>
+      <p className="hint-text">
+        Generated automatically once each business day (Section 10.2), also sent to the Owner over WhatsApp. Each row
+        below is frozen at generation time — it won't change even if later corrections touch that day's data.
+      </p>
+      {rows?.length === 0 && <div className="card"><p className="hint-text" style={{ margin: 0 }}>None generated yet — the first one lands after today's configured report time (Settings screen).</p></div>}
+      {rows?.map((r) => {
+        const s = r.summary;
+        return (
+          <div key={r.id} className="card" style={{ marginBottom: 8 }}>
+            <strong>{new Date(r.business_date).toLocaleDateString("en-IN")}</strong>
+            <span className="hint-text"> — generated {new Date(r.generated_at).toLocaleString("en-IN")}</span>
+            <div className="hint-text" style={{ marginTop: 4 }}>
+              Sales ₹{Number(s.salesTotal).toFixed(2)} ({s.billCount} bills) · {s.pendingDeliveryOrders} order(s) in progress ·
+              {" "}{s.pendingPutawayTasks} put-away pending · {s.openCycleCountTasks} cycle count(s) pending ·
+              {" "}{s.pendingWriteOffApprovals} write-off approval(s)
+              {(s.coldChainHasGap || s.coldChainOutOfRange) && <> · <span className="badge badge-warn">cold chain flagged</span></>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Section 10.2's SQL console — Owner only. Read-only in two independent
+ * layers server-side (a text check, and the query actually running
+ * inside a Postgres READ ONLY transaction) — this screen doesn't repeat
+ * that logic, it just shows the result or the error.
+ */
+function SqlConsoleTab() {
+  const [query, setQuery] = useState("SELECT * FROM products LIMIT 10");
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      setResult(await api.post("/reports/sql-console", { query }));
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.body?.detail ?? err.body?.error ?? "Query failed.") : "Query failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <p className="hint-text">
+        Read-only — SELECT (or a WITH … SELECT) only, enforced by Postgres itself, not just this screen. Capped at 500
+        rows and a 5-second timeout.
+      </p>
+      <textarea
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        rows={5}
+        style={{ width: "100%", fontFamily: "monospace", fontSize: "0.9em" }}
+      />
+      <button className="btn-primary" style={{ marginTop: 8 }} disabled={busy || !query.trim()} onClick={run}>{busy ? "Running…" : "Run query"}</button>
+      {error && <p className="error-text">{error}</p>}
+      {result && (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <p className="hint-text">{result.rowCount} row(s){result.truncated && ` (showing first 500)`}</p>
+          <table className="data-table">
+            <thead><tr>{result.columns.map((c: string) => <th key={c}>{c}</th>)}</tr></thead>
+            <tbody>
+              {result.rows.map((row: unknown[], i: number) => (
+                <tr key={i}>{row.map((v, j) => <td key={j}>{v === null ? <span className="hint-text">null</span> : String(v)}</td>)}</tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
