@@ -92,6 +92,23 @@ export interface RefillReminderPayload {
   exhaustionDate: string; // ISO date
 }
 
+// Section 10B.2's one-tap PO send.
+export interface POSentPayload {
+  poNumber: string;
+  vendorName: string;
+  lineCount: number;
+}
+
+// Section 10B.4's optional daily WhatsApp digest — "the four headline
+// figures," nothing more (full detail lives on the Financials screen).
+export interface FinancialDailyDigestPayload {
+  businessDate: string;
+  salesTotal: number;
+  purchasesTotal: number;
+  grossProfit: number | null;
+  grossMarginPercent: number | null;
+}
+
 export function buildWhatsAppText(triggerType: string, payload: Record<string, unknown>): string {
   switch (triggerType) {
     case "bill_generated":
@@ -114,6 +131,10 @@ export function buildWhatsAppText(triggerType: string, payload: Record<string, u
       return (payload as unknown as InboxReplyPayload).body;
     case "refill_reminder":
       return buildRefillReminderText(payload as unknown as RefillReminderPayload);
+    case "po_sent":
+      return buildPOSentText(payload as unknown as POSentPayload);
+    case "financial_daily_digest":
+      return buildFinancialDailyDigestText(payload as unknown as FinancialDailyDigestPayload);
     default:
       throw new Error(`No WhatsApp message builder for trigger type "${triggerType}"`);
   }
@@ -231,5 +252,40 @@ function buildRefillReminderText(p: RefillReminderPayload): string {
     `Hi ${p.customerName}, your regular item "${p.productName}" from Dipasha Medical Store is due for a refill around ${date}.`,
     ``,
     `Reply to this message or call the store to order, or visit anytime.`,
+  ].join("\n");
+}
+
+// Section 10B.2: "one-tap send of the PO to the distributor over
+// WhatsApp." A summary, not a line-by-line dump — the PO's PDF/Excel
+// export is the actual document; this message is the notification that
+// it's on its way, matching every other trigger's "short summary, full
+// detail lives elsewhere" rule.
+function buildPOSentText(p: POSentPayload): string {
+  return [
+    `Purchase order ${p.poNumber} from Dipasha Medical Store — ${p.lineCount} item(s).`,
+    ``,
+    `Please confirm receipt and expected delivery.`,
+  ].join("\n");
+}
+
+// Section 10B.4: "the four headline figures" — sales, purchases, gross
+// profit, gross margin — nothing else. Owner opt-in only, so no
+// per-customer redaction concerns apply here (unlike callback/refund
+// messages); gross profit/margin can be null when every sold line's cost
+// is unknown for the day (see grossProfit.costUnknownWarning upstream).
+function buildFinancialDailyDigestText(p: FinancialDailyDigestPayload): string {
+  const date = new Date(p.businessDate).toLocaleDateString("en-IN");
+  const profitLine =
+    p.grossProfit === null || p.grossMarginPercent === null
+      ? `Gross profit: unavailable (cost missing on some sales)`
+      : `Gross profit: ₹${p.grossProfit.toFixed(2)} (${p.grossMarginPercent.toFixed(1)}%)`;
+  return [
+    `Dipasha Medical Store — financial summary for ${date}`,
+    ``,
+    `Sales: ₹${p.salesTotal.toFixed(2)}`,
+    `Purchases: ₹${p.purchasesTotal.toFixed(2)}`,
+    profitLine,
+    ``,
+    `Full detail in the console under Financials.`,
   ].join("\n");
 }

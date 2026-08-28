@@ -10,6 +10,7 @@ const creditNoteSchema = z.object({
     quantityReturned: z.number().int().positive(),
     condition: z.enum(["good", "damaged"]),
   })).min(1),
+  refundPaymentMethod: z.enum(["cash", "upi", "card", "cheque", "bank_transfer"]).nullable().optional(),
   deviceId: z.string().min(1),
 });
 
@@ -23,7 +24,7 @@ export default async function returnsRoutes(app: FastifyInstance) {
       const parsed = creditNoteSchema.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
       try {
-        const result = await createCreditNote({ ...parsed.data, createdBy: req.auth!.sub, source: "web" });
+        const result = await createCreditNote({ ...parsed.data, refundPaymentMethod: parsed.data.refundPaymentMethod ?? null, createdBy: req.auth!.sub, source: "web" });
         reply.code(201).send(result);
       } catch (err) {
         if (err instanceof ReturnValidationError) return reply.code(409).send({ error: err.code, details: err.details });

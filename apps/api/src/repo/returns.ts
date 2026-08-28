@@ -17,6 +17,11 @@ export interface CreateCreditNoteInput {
   originalSaleId: string;
   reason: string;
   lines: Array<{ saleLineId: string; quantityReturned: number; condition: "good" | "damaged" }>;
+  // Section 10B.1's cash book needs to know which instrument a refund
+  // actually went out through — optional since not every return is
+  // repaid on the spot (some are simply stock coming back with the
+  // money never having changed hands, e.g. an unopened delivery reject).
+  refundPaymentMethod: "cash" | "upi" | "card" | "cheque" | "bank_transfer" | null;
   createdBy: string;
   deviceId: string;
   source: "app" | "web" | "web_manual";
@@ -74,9 +79,9 @@ export async function createCreditNote(input: CreateCreditNoteInput) {
     const creditNoteNumber = await reserveNumber(client, prefix);
 
     const { rows: cnRows } = await client.query(
-      `INSERT INTO credit_notes (credit_note_number, original_sale_id, reason, total_refund_value, created_by, device_id, source)
-       VALUES ($1,$2,$3,0,$4,$5,$6) RETURNING id`,
-      [creditNoteNumber, input.originalSaleId, input.reason, input.createdBy, input.deviceId, input.source]
+      `INSERT INTO credit_notes (credit_note_number, original_sale_id, reason, total_refund_value, refund_payment_method, created_by, device_id, source)
+       VALUES ($1,$2,$3,0,$4,$5,$6,$7) RETURNING id`,
+      [creditNoteNumber, input.originalSaleId, input.reason, input.refundPaymentMethod, input.createdBy, input.deviceId, input.source]
     );
     const creditNoteId = cnRows[0].id;
 

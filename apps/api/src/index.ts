@@ -4,6 +4,7 @@ import { pool } from "./db.js";
 import { processPendingNotifications } from "./domain/notifications.js";
 import { generateDailyReportIfDue } from "./repo/reports.js";
 import { sendDueRefillReminders } from "./repo/chronic.js";
+import { sendFinancialDailyDigestIfDue } from "./repo/financial-summary.js";
 
 // Fail fast and loud, not on the first login attempt in front of a
 // customer. A blank JWT_SECRET would otherwise sign every token with an
@@ -49,11 +50,21 @@ const refillReminderInterval = config.databaseUrl
     }, REFILL_REMINDER_POLL_INTERVAL_MS)
   : null;
 
+// Section 10B.4's optional financial digest — same coarse, once-per-day
+// poller pattern as the daily report and refill reminders above.
+const FINANCIAL_DIGEST_POLL_INTERVAL_MS = 5 * 60_000;
+const financialDigestInterval = config.databaseUrl
+  ? setInterval(() => {
+      sendFinancialDailyDigestIfDue(app.log).catch((err) => app.log.error(err, "financial digest tick failed"));
+    }, FINANCIAL_DIGEST_POLL_INTERVAL_MS)
+  : null;
+
 async function shutdown(signal: string) {
   app.log.info({ signal }, "shutting down");
   if (notificationInterval) clearInterval(notificationInterval);
   if (dailyReportInterval) clearInterval(dailyReportInterval);
   if (refillReminderInterval) clearInterval(refillReminderInterval);
+  if (financialDigestInterval) clearInterval(financialDigestInterval);
   await app.close();
   await pool?.end();
   process.exit(0);

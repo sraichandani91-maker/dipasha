@@ -6,6 +6,7 @@ import { apportionByTaxableValue, computeEffectiveCostPerBaseUnit } from "../dom
 import { splitGst } from "../domain/gst-split.js";
 import { suggestPutawayBin } from "../domain/putaway-suggestion.js";
 import { checkCallbackMatches } from "./callback.js";
+import { applyInvoiceLinesToPurchaseOrder } from "./purchase-orders.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -199,10 +200,6 @@ export async function createPurchaseInvoice(input: CreatePurchaseInvoiceInput) {
     );
     const invoiceId = invoiceRows[0].id;
 
-    if (input.purchaseOrderId) {
-      await client.query(`UPDATE purchase_orders SET status = 'received' WHERE id = $1`, [input.purchaseOrderId]);
-    }
-
     for (const l of computedLines) {
       const batch = await findOrCreateBatch(client, l.productId, l.batchNo, l.expiryDate, l.mrp, {
         rateBeforeDiscount: l.rateBeforeDiscount,
@@ -245,6 +242,19 @@ export async function createPurchaseInvoice(input: CreatePurchaseInvoiceInput) {
         `INSERT INTO putaway_tasks (product_id, batch_id, staging_bin_id, quantity_base_units, suggested_bin_id, reference_type, reference_id)
          VALUES ($1,$2,$3,$4,$5,'purchase_invoice',$6)`,
         [l.productId, batch.id, stagingBin.id, totalReceived, suggested?.id ?? null, invoiceId]
+      );
+    }
+
+    // Section 10B.2: "auto-match it to the open PO... ordered versus
+    // received versus billed, line by line." Uses billed quantity, not
+    // totalReceived (which includes free goods) — a PO orders billable
+    // units, so matching against those is what "ordered vs received"
+    // actually means here.
+    if (input.purchaseOrderId) {
+      await applyInvoiceLinesToPurchaseOrder(
+        client,
+        input.purchaseOrderId,
+        computedLines.map((l) => ({ productId: l.productId, quantityBaseUnits: l.quantityBaseUnits }))
       );
     }
 

@@ -4,6 +4,13 @@
  * reasonable follow-up, not built here — see DECISIONS.md). No external
  * dependency — CSV is simple enough to be worth not pulling one in for.
  */
+// Shared by every CSV-downloadable report/export in the build (statutory
+// reports, M15's ledgers) — one place setting the attachment header
+// consistently rather than each route re-typing it.
+export function sendCsvAttachment(reply: { header: (n: string, v: string) => any; type: (t: string) => any; send: (b: string) => any }, filenameStem: string, rows: Array<Record<string, unknown>>) {
+  reply.header("Content-Disposition", `attachment; filename="${filenameStem}.csv"`).type("text/csv").send(toCsv(rows));
+}
+
 export function toCsv(rows: Array<Record<string, unknown>>, columns?: string[]): string {
   if (rows.length === 0) return columns ? columns.join(",") + "\n" : "";
   const cols = columns ?? Object.keys(rows[0]!);

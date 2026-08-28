@@ -21,8 +21,15 @@ export interface CashPreview {
 // completed sales — never trusted from the client (Section 6A.5 /
 // Section 8's "expected vs declared, variance flagged" pattern).
 export async function previewCash(businessDate: string): Promise<CashPreview> {
+  // A cash tender's own amount is what the customer handed over, not net
+  // revenue — change given back (sales.change_due, always cash per
+  // repo/sales.ts's createSale) comes off here too, or "expected cash"
+  // would run high by the total change given every day (found while
+  // building M15's cash book, which hits the exact same sale_tenders
+  // data and needed the same fix — see DECISIONS.md).
   const { rows } = await requirePool().query(
-    `SELECT st.tender_type, SUM(st.amount)::numeric AS total
+    `SELECT st.tender_type,
+            SUM(st.amount - CASE WHEN st.tender_type = 'cash' THEN COALESCE(s.change_due, 0) ELSE 0 END)::numeric AS total
      FROM sale_tenders st JOIN sales s ON s.id = st.sale_id
      WHERE s.business_date = $1 AND s.status = 'completed'
      GROUP BY st.tender_type`,

@@ -1,7 +1,10 @@
+import type { PoolClient, Pool } from "pg";
 import { pool } from "../db.js";
 import { lowStockSuggestions } from "../domain/reorder.js";
 import { reserveNumber } from "../domain/bill-numbering.js";
 import { getSetting } from "./settings.js";
+import { enqueueAndSendNow } from "../domain/notifications.js";
+import type { MinimalLogger } from "../lib/whatsapp-sender.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -158,9 +161,131 @@ export async function getPurchaseOrder(id: string) {
     [id]
   );
   if (!poRows[0]) return null;
+  // "Ordered versus received versus billed, line by line" (10B.2) —
+  // ordered is quantity_base_units, received is the cumulative column a
+  // matched invoice increments (below); billed is the same event in this
+  // build, since a GST purchase invoice's own creation IS the goods-in
+  // step (Section 6.2) — there's no separate pre-invoice receiving stage
+  // to distinguish it from. Flagged here, not modelled as three separate
+  // numbers that would just always be equal.
   const { rows: lineRows } = await db.query(
-    `SELECT pol.*, p.name AS product_name FROM purchase_order_lines pol JOIN products p ON p.id = pol.product_id WHERE pol.purchase_order_id = $1`,
+    `SELECT pol.*, p.name AS product_name,
+       (pol.quantity_base_units - pol.quantity_received_base_units) AS quantity_short
+     FROM purchase_order_lines pol JOIN products p ON p.id = pol.product_id WHERE pol.purchase_order_id = $1`,
     [id]
   );
   return { ...poRows[0], lines: lineRows };
+}
+
+export async function listPurchaseOrders(filter: { status?: string } = {}) {
+  const db = requirePool();
+  const where = filter.status ? `WHERE po.status = $1` : "";
+  const params = filter.status ? [filter.status] : [];
+  const { rows } = await db.query(
+    `SELECT po.*, v.name AS vendor_name,
+       (SELECT COUNT(*) FROM purchase_order_lines pol WHERE pol.purchase_order_id = po.id) AS line_count
+     FROM purchase_orders po JOIN vendors v ON v.id = po.vendor_id
+     ${where} ORDER BY po.created_at DESC`,
+    params
+  );
+  return rows;
+}
+
+export class PurchaseOrderError extends Error {
+  constructor(public code: string) {
+    super(code);
+  }
+}
+
+// Section 10B.2: "one-tap send of the PO to the distributor over
+// WhatsApp or email, straight from the PO screen." WhatsApp reuses M8's
+// one dispatcher, same as every other outbound message in this build.
+// Email has no real provider anywhere in this codebase yet — logged the
+// same "no real provider configured" way the WhatsApp dev sender already
+// is, not a second half-built integration.
+export async function markPurchaseOrderSent(id: string, sentVia: "whatsapp" | "email", log: MinimalLogger): Promise<void> {
+  const db = requirePool();
+  const { rows } = await db.query(
+    `SELECT po.po_number, v.name AS vendor_name, v.phone, v.email,
+       (SELECT COUNT(*) FROM purchase_order_lines pol WHERE pol.purchase_order_id = po.id) AS line_count
+     FROM purchase_orders po JOIN vendors v ON v.id = po.vendor_id WHERE po.id = $1`,
+    [id]
+  );
+  const po = rows[0];
+  if (!po) throw new PurchaseOrderError("not_found");
+
+  if (sentVia === "whatsapp") {
+    if (!po.phone) throw new PurchaseOrderError("vendor_has_no_phone");
+    await enqueueAndSendNow(
+      {
+        triggerType: "po_sent",
+        category: "transactional",
+        templateKey: "whatsapp_template_po_sent",
+        triggerEnabledSettingKey: "whatsapp_trigger_po_sent_enabled",
+        recipientCustomerId: null,
+        recipientPhone: po.phone,
+        referenceType: "purchase_order",
+        referenceId: id,
+        payload: { poNumber: po.po_number, vendorName: po.vendor_name, lineCount: Number(po.line_count) },
+      },
+      log
+    );
+  } else {
+    if (!po.email) throw new PurchaseOrderError("vendor_has_no_email");
+    log.warn({ vendorEmail: po.email, poNumber: po.po_number }, "DEV EMAIL SENDER: no real provider configured — logging instead of sending");
+  }
+
+  await db.query(`UPDATE purchase_orders SET status = 'sent', sent_at = now(), sent_via = $1 WHERE id = $2`, [sentVia, id]);
+}
+
+export async function markPurchaseOrderAcknowledged(id: string): Promise<void> {
+  const { rowCount } = await requirePool().query(
+    `UPDATE purchase_orders SET acknowledged_at = now(), status = 'acknowledged' WHERE id = $1 AND status = 'sent'`,
+    [id]
+  );
+  if (rowCount === 0) throw new PurchaseOrderError("not_sent_or_not_found");
+}
+
+// Section 10B.2: "chase list for POs unacknowledged beyond a
+// configurable window."
+export async function getPoChaseList() {
+  const chaseWindowDays = await getSetting("po_chase_window_days", 3);
+  const { rows } = await requirePool().query(
+    `SELECT po.*, v.name AS vendor_name, v.phone
+     FROM purchase_orders po JOIN vendors v ON v.id = po.vendor_id
+     WHERE po.status = 'sent' AND po.sent_at < now() - ($1 || ' days')::interval
+     ORDER BY po.sent_at ASC`,
+    [chaseWindowDays]
+  );
+  return rows;
+}
+
+// Called from repo/purchases.ts's createPurchaseInvoice when the invoice
+// is linked to an open PO — "auto-match it to the open PO and show
+// ordered versus received versus billed... short supply is flagged, not
+// silently absorbed." Runs inside the invoice's own transaction so a
+// rolled-back invoice never leaves a PO half-updated.
+export async function applyInvoiceLinesToPurchaseOrder(
+  client: PoolClient | Pool,
+  purchaseOrderId: string,
+  lines: Array<{ productId: string; quantityBaseUnits: number }>
+): Promise<void> {
+  for (const line of lines) {
+    await client.query(
+      `UPDATE purchase_order_lines SET quantity_received_base_units = quantity_received_base_units + $1
+       WHERE purchase_order_id = $2 AND product_id = $3`,
+      [line.quantityBaseUnits, purchaseOrderId, line.productId]
+    );
+  }
+
+  const { rows } = await client.query(
+    `SELECT quantity_base_units, quantity_received_base_units FROM purchase_order_lines WHERE purchase_order_id = $1`,
+    [purchaseOrderId]
+  );
+  const fullyReceived = rows.every((r: any) => r.quantity_received_base_units >= r.quantity_base_units);
+  const anyReceived = rows.some((r: any) => r.quantity_received_base_units > 0);
+  const newStatus = fullyReceived ? "received" : anyReceived ? "partially_received" : null;
+  if (newStatus) {
+    await client.query(`UPDATE purchase_orders SET status = $1 WHERE id = $2`, [newStatus, purchaseOrderId]);
+  }
 }

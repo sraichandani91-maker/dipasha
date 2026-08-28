@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { sendCsvAttachment } from "../lib/csv.js";
 import {
   CustomerError,
   getAgeingReport,
@@ -74,8 +75,12 @@ export default async function customerRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/customers/ageing", guard, async (_req, reply) => {
-    reply.send(await getAgeingReport());
+  app.get("/customers/ageing", guard, async (req, reply) => {
+    const q = z.object({ format: z.enum(["json", "csv"]).default("json") }).safeParse(req.query);
+    if (!q.success) return reply.code(400).send({ error: "invalid_query" });
+    const rows = await getAgeingReport();
+    if (q.data.format === "csv") return sendCsvAttachment(reply, "customer-ageing", rows);
+    reply.send(rows);
   });
 
   const paymentSchema = z.object({
@@ -108,10 +113,12 @@ export default async function customerRoutes(app: FastifyInstance) {
   // reasonable follow-up (M8 for WhatsApp itself), not built this pass.
   app.get("/customers/:id/statement", guard, async (req, reply) => {
     const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
-    const q = z.object({ from: z.string(), to: z.string() }).safeParse(req.query);
+    const q = z.object({ from: z.string(), to: z.string(), format: z.enum(["json", "csv"]).default("json") }).safeParse(req.query);
     if (!params.success || !q.success) return reply.code(400).send({ error: "invalid_query" });
     try {
-      reply.send(await getCustomerStatement(params.data.id, q.data.from, q.data.to));
+      const statement = await getCustomerStatement(params.data.id, q.data.from, q.data.to);
+      if (q.data.format === "csv") return sendCsvAttachment(reply, `customer-statement-${statement.customer.name}`, statement.bills);
+      reply.send(statement);
     } catch (err) {
       if (err instanceof CustomerError) return reply.code(404).send({ error: err.code });
       throw err;
