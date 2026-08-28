@@ -16,9 +16,15 @@ services:
       timeout: 5s
       retries: 10
     ports:
-      # Bound to localhost only — Postgres is never exposed to the public
-      # internet (Section 12B.5). Remove entirely once deploying to a real
-      # VPS; this is for local development convenience only.
+      # Bound to loopback only — Postgres is never exposed to the public
+      # internet (Section 12B.5's actual requirement), which a 127.0.0.1
+      # bind already satisfies regardless of host. Originally commented
+      # "remove entirely on a real VPS," from before M16 existed —
+      # revised: scripts/backup.sh (M16.2) needs a host-level cron job to
+      # reach Postgres directly, and a loopback bind is exactly as safe
+      # as the SSH-tunnel/private-network access Section 12B.5 asks for,
+      # since nothing outside the VPS itself can ever reach it. Keep this
+      # on every host, including production.
       - "127.0.0.1:5432:5432"
 
   api:
@@ -30,6 +36,9 @@ services:
       - .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-dipasha}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dipasha}
+      # Set by deploy.sh to the git commit SHA on every deploy (Section
+      # 12B.4) — falls back to "dev" for `docker compose up` run by hand.
+      RELEASE_VERSION: ${RELEASE_VERSION:-dev}
     volumes:
       # Write-off photo evidence (Section 9) — local disk for this single-
       # VPS pilot, not object storage (see DECISIONS.md). Named volume so
@@ -45,6 +54,9 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+        VITE_RELEASE_VERSION: ${RELEASE_VERSION:-dev}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:80"

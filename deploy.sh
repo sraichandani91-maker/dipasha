@@ -16,6 +16,12 @@ set +a
 echo "==> Pulling latest code"
 git pull --ff-only
 
+# Section 12B.4: every Sentry event is tagged with the deploy it came
+# from, so a bug report reads "this started at commit abc1234," not just
+# a timestamp. No effect at all if SENTRY_DSN isn't set.
+export RELEASE_VERSION
+RELEASE_VERSION="$(git rev-parse --short HEAD)"
+
 echo "==> Building images"
 docker compose build
 
