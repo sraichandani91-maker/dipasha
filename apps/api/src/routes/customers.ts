@@ -2,7 +2,9 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { sendCsvAttachment } from "../lib/csv.js";
 import {
+  commitCustomerBulkImport,
   CustomerError,
+  diffCustomerBulkImport,
   getAgeingReport,
   getCustomerBalance,
   getCustomerStatement,
@@ -123,5 +125,19 @@ export default async function customerRoutes(app: FastifyInstance) {
       if (err instanceof CustomerError) return reply.code(404).send({ error: err.code });
       throw err;
     }
+  });
+
+  // Owner-requested — same preview-diff shape as the product master's
+  // bulk import: nothing is written until Commit, matched by phone.
+  app.post("/customers/bulk-import/preview", guard, async (req, reply) => {
+    const body = z.object({ csv: z.string().min(1) }).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: "invalid_body" });
+    reply.send(await diffCustomerBulkImport(body.data.csv));
+  });
+
+  app.post("/customers/bulk-import/commit", guard, async (req, reply) => {
+    const body = z.object({ csv: z.string().min(1) }).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: "invalid_body" });
+    reply.send(await commitCustomerBulkImport(body.data.csv));
   });
 }

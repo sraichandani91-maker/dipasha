@@ -1,4 +1,5 @@
 import { pool } from "../db.js";
+import { parseCsv } from "../lib/csv.js";
 
 function requirePool() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -277,4 +278,135 @@ export async function getCustomerStatement(customerId: string, fromDate: string,
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+// --- Bulk customer import (owner-requested) — same preview-diff shape
+// as the product master's bulk import (repo/product-master.ts) and
+// Inventory's bulk tools: nothing is written until Commit, and Preview
+// shows exactly what will change per row first.
+export interface CustomerDiffRow {
+  rowNumber: number;
+  ok: boolean;
+  error: string | null;
+  action: "create" | "update" | null;
+  name: string;
+  phone: string | null;
+  changes: Array<{ field: string; from: unknown; to: unknown }>;
+}
+
+const CUSTOMER_IMPORT_BOOL_FIELDS = ["credit_enabled", "whatsapp_transactional_opt_in", "whatsapp_marketing_opt_in"] as const;
+
+async function diffCustomerRows(csvText: string): Promise<CustomerDiffRow[]> {
+  const rows = parseCsv(csvText);
+  const out: CustomerDiffRow[] = [];
+  // Matched by phone, same as findOrCreateCustomer's own walk-in
+  // matching — a phone seen twice in one file would otherwise create two
+  // separate customers, since each row is diffed independently against
+  // the database, not against earlier rows in the same batch.
+  const phonesSeen = new Set<string>();
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!;
+    const name = (r.name ?? "").trim();
+    const phone = (r.phone ?? "").trim() || null;
+    const base: CustomerDiffRow = { rowNumber: i + 2, ok: false, error: null, action: null, name, phone, changes: [] };
+
+    if (!name) {
+      out.push({ ...base, error: "missing_name" });
+      continue;
+    }
+    if (phone && phonesSeen.has(phone)) {
+      out.push({ ...base, error: "duplicate_phone_in_file" });
+      continue;
+    }
+    if (phone) phonesSeen.add(phone);
+
+    const existing = phone ? await findCustomerByPhone(phone) : null;
+
+    if (existing) {
+      const { rows: fullRows } = await requirePool().query(
+        `SELECT name, credit_enabled, credit_limit, payment_terms_days, whatsapp_transactional_opt_in, whatsapp_marketing_opt_in
+         FROM customers WHERE id = $1`,
+        [existing.id]
+      );
+      const e = fullRows[0];
+      const changes: Array<{ field: string; from: unknown; to: unknown }> = [];
+      if (name !== e.name) changes.push({ field: "name", from: e.name, to: name });
+      for (const field of CUSTOMER_IMPORT_BOOL_FIELDS) {
+        if (r[field] !== undefined && r[field] !== "" && (r[field] === "true") !== e[field]) {
+          changes.push({ field, from: e[field], to: r[field] === "true" });
+        }
+      }
+      if (r.credit_limit !== undefined && r.credit_limit !== "" && Number(r.credit_limit) !== Number(e.credit_limit ?? NaN)) {
+        changes.push({ field: "credit_limit", from: e.credit_limit, to: Number(r.credit_limit) });
+      }
+      if (r.payment_terms_days !== undefined && r.payment_terms_days !== "" && Number(r.payment_terms_days) !== e.payment_terms_days) {
+        changes.push({ field: "payment_terms_days", from: e.payment_terms_days, to: Number(r.payment_terms_days) });
+      }
+      out.push({ ...base, ok: true, action: "update", changes });
+    } else {
+      out.push({
+        ...base,
+        ok: true,
+        action: "create",
+        changes: [{ field: "name", from: null, to: name }, { field: "phone", from: null, to: phone }],
+      });
+    }
+  }
+  return out;
+}
+
+export async function diffCustomerBulkImport(csvText: string): Promise<CustomerDiffRow[]> {
+  return diffCustomerRows(csvText);
+}
+
+export async function commitCustomerBulkImport(csvText: string): Promise<{ created: number; updated: number; skipped: number }> {
+  const rows = parseCsv(csvText);
+  const diff = await diffCustomerRows(csvText);
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (let i = 0; i < diff.length; i++) {
+    const d = diff[i]!;
+    if (!d.ok) { skipped++; continue; }
+    const raw = rows[i]!;
+
+    if (d.action === "update") {
+      if (d.changes.length === 0) { skipped++; continue; }
+      const existing = await findCustomerByPhone(d.phone!);
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      const set = (col: string, val: unknown) => { values.push(val); sets.push(`${col} = $${values.length}`); };
+      if (d.changes.some((c) => c.field === "name")) set("name", d.name);
+      for (const field of CUSTOMER_IMPORT_BOOL_FIELDS) {
+        if (raw[field] !== undefined && raw[field] !== "") set(field, raw[field] === "true");
+      }
+      if (raw.credit_limit !== undefined && raw.credit_limit !== "") set("credit_limit", Number(raw.credit_limit));
+      if (raw.payment_terms_days !== undefined && raw.payment_terms_days !== "") set("payment_terms_days", Number(raw.payment_terms_days));
+      if (sets.length > 0) {
+        values.push(existing!.id);
+        await requirePool().query(`UPDATE customers SET ${sets.join(", ")} WHERE id = $${values.length}`, values);
+      }
+      updated++;
+    } else if (d.action === "create") {
+      await requirePool().query(
+        `INSERT INTO customers (name, phone, credit_enabled, credit_limit, payment_terms_days, whatsapp_transactional_opt_in, whatsapp_marketing_opt_in)
+         VALUES ($1,$2,$3,$4,$5,
+           COALESCE($6, true),
+           COALESCE($7, false))`,
+        [
+          d.name,
+          d.phone,
+          raw.credit_enabled === "true",
+          raw.credit_limit ? Number(raw.credit_limit) : null,
+          raw.payment_terms_days ? Number(raw.payment_terms_days) : 0,
+          raw.whatsapp_transactional_opt_in === "" || raw.whatsapp_transactional_opt_in === undefined ? null : raw.whatsapp_transactional_opt_in === "true",
+          raw.whatsapp_marketing_opt_in === "" || raw.whatsapp_marketing_opt_in === undefined ? null : raw.whatsapp_marketing_opt_in === "true",
+        ]
+      );
+      created++;
+    }
+  }
+  return { created, updated, skipped };
 }
