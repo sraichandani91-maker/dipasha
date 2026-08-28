@@ -21,6 +21,7 @@ const GROUPS: Array<{ label: string; prefixes: string[] }> = [
   { label: "WhatsApp notifications", prefixes: ["whatsapp"] },
   { label: "Sessions & search", prefixes: ["session_idle", "web_session_idle", "search_sort"] },
   { label: "Write-offs", prefixes: ["writeoff"] },
+  { label: "Accounting & PO tracking", prefixes: ["po_chase_window", "financial_daily_digest"] },
 ];
 
 function groupFor(key: string): string {

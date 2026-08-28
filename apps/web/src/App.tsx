@@ -30,12 +30,15 @@ import InventoryPage from "./pages/InventoryPage.js";
 import SettingsPage from "./pages/SettingsPage.js";
 import WhatsAppInboxPage from "./pages/WhatsAppInboxPage.js";
 import ChronicPage from "./pages/ChronicPage.js";
+import AccountingPage from "./pages/AccountingPage.js";
+import FinancialsPage from "./pages/FinancialsPage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
   | "cycle-counts" | "cold-chain" | "expiry-audit" | "write-offs" | "reports"
   | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
-  | "delivery-orders" | "pick-pack" | "rider" | "staff" | "inventory" | "settings" | "whatsapp-inbox" | "chronic";
+  | "delivery-orders" | "pick-pack" | "rider" | "staff" | "inventory" | "settings" | "whatsapp-inbox" | "chronic"
+  | "accounting" | "financials";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -108,6 +111,12 @@ export default function App() {
           {user.role === "owner" && (
             <button className={tab === "margins" ? "active" : ""} onClick={() => setTab("margins")}>Margins</button>
           )}
+          {user.role === "owner" && (
+            <button className={tab === "financials" ? "active" : ""} onClick={() => setTab("financials")}>Financials</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "accounting" ? "active" : ""} onClick={() => setTab("accounting")}>Accounting</button>
+          )}
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "customers" ? "active" : ""} onClick={() => setTab("customers")}>Customers</button>
           )}
@@ -174,6 +183,8 @@ export default function App() {
             {tab === "prescribers" && <PrescribersPage />}
             {tab === "chronic" && <ChronicPage />}
             {tab === "margins" && <MarginReportsPage />}
+            {tab === "financials" && <FinancialsPage />}
+            {tab === "accounting" && <AccountingPage />}
             {tab === "customers" && <CustomersPage />}
             {tab === "vendor-comparison" && <VendorComparisonPage />}
             {tab === "notifications" && <NotificationsPage />}
