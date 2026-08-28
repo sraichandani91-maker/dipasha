@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createProduct, findProductsBySubstituteGroup, getStockLocations, listProducts, listProductsForLabelSheet, updateProduct } from "../repo/products.js";
+import { getProductHistory } from "../repo/product-history.js";
 import { findOrCreateSalt } from "../repo/salts.js";
 import { substituteGroupKey } from "../domain/substitute-group.js";
 import { generateInternalBarcode } from "../domain/barcode.js";
@@ -85,6 +86,21 @@ export default async function productRoutes(app: FastifyInstance) {
     if (!params.success) return reply.code(400).send({ error: "invalid_id" });
     reply.send(await getStockLocations(params.data.id));
   });
+
+  // F4-from-search item ledger (owner-requested): every sale and every
+  // GST purchase this product has ever appeared on, one row per
+  // transaction. Same Owner/store_manager bar as `GET /sales` and
+  // `GET /purchase-invoices` — a purchase row always carries the landed
+  // rate, which is cost data.
+  app.get(
+    "/products/:id/history",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+      reply.send(await getProductHistory(params.data.id));
+    }
+  );
 
   // Product master create/edit (Section 10.2). Owner and Store Manager
   // only — pickers/riders/other reads stay open via GET above, but the
