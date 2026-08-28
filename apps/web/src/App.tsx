@@ -28,12 +28,13 @@ import RiderPage from "./pages/RiderPage.js";
 import StaffPage from "./pages/StaffPage.js";
 import InventoryPage from "./pages/InventoryPage.js";
 import SettingsPage from "./pages/SettingsPage.js";
+import WhatsAppInboxPage from "./pages/WhatsAppInboxPage.js";
 
 type Tab =
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
   | "cycle-counts" | "cold-chain" | "expiry-audit" | "write-offs" | "reports"
   | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
-  | "delivery-orders" | "pick-pack" | "rider" | "staff" | "inventory" | "settings";
+  | "delivery-orders" | "pick-pack" | "rider" | "staff" | "inventory" | "settings" | "whatsapp-inbox";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -113,6 +114,9 @@ export default function App() {
             <button className={tab === "notifications" ? "active" : ""} onClick={() => setTab("notifications")}>Notifications</button>
           )}
           {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "whatsapp-inbox" ? "active" : ""} onClick={() => setTab("whatsapp-inbox")}>WhatsApp inbox</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "delivery-orders" ? "active" : ""} onClick={() => setTab("delivery-orders")}>Delivery orders</button>
           )}
           {(user.role === "owner" || user.role === "store_manager" || user.role === "picker_packer") && (
@@ -168,6 +172,7 @@ export default function App() {
             {tab === "customers" && <CustomersPage />}
             {tab === "vendor-comparison" && <VendorComparisonPage />}
             {tab === "notifications" && <NotificationsPage />}
+            {tab === "whatsapp-inbox" && <WhatsAppInboxPage />}
             {tab === "scan-invoice" && <ScanInvoicePage />}
             {tab === "delivery-orders" && <DeliveryOrdersPage />}
             {tab === "pick-pack" && <PickPackPage />}
