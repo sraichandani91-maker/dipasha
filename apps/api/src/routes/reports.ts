@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { scheduleHRegister } from "../repo/reports.js";
+import { scheduleHRegister, computeDailySummary, getTodayBusinessDate, listDailyReports } from "../repo/reports.js";
 import { listManualOverrides } from "../repo/manual-overrides.js";
+import { runReadOnlyQuery, SqlConsoleError } from "../repo/sql-console.js";
 
 // Section 9A.1 privacy note: prescriber/patient reporting restricted to
 // Owner and Store Manager — this links patients to prescriptions.
@@ -28,6 +29,41 @@ export default async function reportRoutes(app: FastifyInstance) {
     { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
     async (_req, reply) => {
       reply.send(await listManualOverrides());
+    }
+  );
+
+  // Section 10.2: prebuilt dashboard — "today," computed live.
+  app.get(
+    "/reports/dashboard",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (_req, reply) => {
+      reply.send(await computeDailySummary(await getTodayBusinessDate()));
+    }
+  );
+
+  app.get(
+    "/reports/daily-reports",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (_req, reply) => {
+      reply.send(await listDailyReports());
+    }
+  );
+
+  // Section 10.2's SQL console — Owner only, distinct (higher) bar than
+  // every other report in this file: this is raw database access, even
+  // though it's read-only.
+  app.post(
+    "/reports/sql-console",
+    { preHandler: [app.authenticate, app.requireRole("owner")] },
+    async (req, reply) => {
+      const body = z.object({ query: z.string().min(1) }).safeParse(req.body);
+      if (!body.success) return reply.code(400).send({ error: "invalid_body" });
+      try {
+        reply.send(await runReadOnlyQuery(body.data.query));
+      } catch (err) {
+        if (err instanceof SqlConsoleError) return reply.code(400).send({ error: err.code, detail: err.detail });
+        throw err;
+      }
     }
   );
 }

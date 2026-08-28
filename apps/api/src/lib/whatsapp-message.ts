@@ -61,6 +61,22 @@ export interface OrderDeliveredPayload {
   customerName: string;
 }
 
+// Section 10.2's daily auto-report. Owner-facing, not customer-facing —
+// short numbers here too, same "summary in the message, detail in-app"
+// rule as every other trigger; the full breakdown lives on the Reports
+// screen.
+export interface DailyReportPayload {
+  businessDate: string; // ISO date
+  salesTotal: number;
+  billCount: number;
+  pendingDeliveryOrders: number;
+  pendingPutawayTasks: number;
+  openCycleCountTasks: number;
+  pendingWriteOffApprovals: number;
+  coldChainHasGap: boolean;
+  coldChainOutOfRange: boolean;
+}
+
 export function buildWhatsAppText(triggerType: string, payload: Record<string, unknown>): string {
   switch (triggerType) {
     case "bill_generated":
@@ -77,6 +93,8 @@ export function buildWhatsAppText(triggerType: string, payload: Record<string, u
       return buildOrderOutForDeliveryText(payload as unknown as OrderOutForDeliveryPayload);
     case "order_delivered":
       return buildOrderDeliveredText(payload as unknown as OrderDeliveredPayload);
+    case "daily_report":
+      return buildDailyReportText(payload as unknown as DailyReportPayload);
     default:
       throw new Error(`No WhatsApp message builder for trigger type "${triggerType}"`);
   }
@@ -163,5 +181,24 @@ function buildOrderOutForDeliveryText(p: OrderOutForDeliveryPayload): string {
 function buildOrderDeliveredText(p: OrderDeliveredPayload): string {
   return [
     `Hi ${p.customerName}, your order ${p.orderNumber} from Dipasha Medical Store has been delivered. Thank you for shopping with us!`,
+  ].join("\n");
+}
+
+function buildDailyReportText(p: DailyReportPayload): string {
+  const date = new Date(p.businessDate).toLocaleDateString("en-IN");
+  const flags: string[] = [];
+  if (p.pendingWriteOffApprovals > 0) flags.push(`${p.pendingWriteOffApprovals} write-off(s) awaiting approval`);
+  if (p.coldChainOutOfRange) flags.push("last cold-chain reading was out of range");
+  if (p.coldChainHasGap) flags.push("cold-chain reading is overdue");
+  return [
+    `Dipasha Medical Store — daily summary for ${date}`,
+    ``,
+    `Sales: ₹${p.salesTotal.toFixed(2)} across ${p.billCount} bill(s)`,
+    `Delivery orders still in progress: ${p.pendingDeliveryOrders}`,
+    `Put-away pending: ${p.pendingPutawayTasks}`,
+    `Cycle counts pending/awaiting review: ${p.openCycleCountTasks}`,
+    ...(flags.length > 0 ? ["", "Needs attention:", ...flags.map((f) => `- ${f}`)] : []),
+    ``,
+    `Full detail in the console under Reports.`,
   ].join("\n");
 }

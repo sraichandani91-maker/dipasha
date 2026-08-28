@@ -20,7 +20,7 @@ function requirePool() {
 export interface EnqueueInput {
   triggerType:
     | "bill_generated" | "callback_stock_available" | "order_confirmed" | "order_quote" | "order_partially_available"
-    | "order_out_for_delivery" | "order_delivered";
+    | "order_out_for_delivery" | "order_delivered" | "daily_report";
   category: "transactional" | "marketing";
   templateKey: string;
   triggerEnabledSettingKey: string;

@@ -2,6 +2,7 @@ import { buildServer } from "./server.js";
 import { config } from "./config.js";
 import { pool } from "./db.js";
 import { processPendingNotifications } from "./domain/notifications.js";
+import { generateDailyReportIfDue } from "./repo/reports.js";
 
 // Fail fast and loud, not on the first login attempt in front of a
 // customer. A blank JWT_SECRET would otherwise sign every token with an
@@ -28,9 +29,20 @@ const notificationInterval = config.databaseUrl
     }, NOTIFICATION_POLL_INTERVAL_MS)
   : null;
 
+// Section 10.2's daily auto-report — same poller pattern as the
+// notification dispatcher above, on a coarser interval since it only
+// ever needs to fire once per business date.
+const DAILY_REPORT_POLL_INTERVAL_MS = 5 * 60_000;
+const dailyReportInterval = config.databaseUrl
+  ? setInterval(() => {
+      generateDailyReportIfDue(app.log).catch((err) => app.log.error(err, "daily report tick failed"));
+    }, DAILY_REPORT_POLL_INTERVAL_MS)
+  : null;
+
 async function shutdown(signal: string) {
   app.log.info({ signal }, "shutting down");
   if (notificationInterval) clearInterval(notificationInterval);
+  if (dailyReportInterval) clearInterval(dailyReportInterval);
   await app.close();
   await pool?.end();
   process.exit(0);
