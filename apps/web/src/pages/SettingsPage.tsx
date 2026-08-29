@@ -16,7 +16,7 @@ const GROUPS: Array<{ label: string; prefixes: string[] }> = [
   { label: "Purchases & GST", prefixes: ["invoice_reconciliation", "expiry_reject", "near_expiry", "po_number", "ai_invoice"] },
   { label: "Cycle counts & cold chain", prefixes: ["cycle_count", "cold_chain"] },
   { label: "Delivery orders", prefixes: ["order_number", "order_batch", "order_response", "pending_order_response", "delivery_batch"] },
-  { label: "Reordering", prefixes: ["reorder"] },
+  { label: "Order book (Shortbook)", prefixes: ["shortbook", "reorder"] },
   { label: "Requests & callbacks", prefixes: ["daily_request_review", "stock_reservation"] },
   { label: "WhatsApp notifications", prefixes: ["whatsapp"] },
   { label: "Sessions & search", prefixes: ["session_idle", "web_session_idle", "search_sort"] },

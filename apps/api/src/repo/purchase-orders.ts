@@ -1,6 +1,6 @@
 import type { PoolClient, Pool } from "pg";
 import { pool } from "../db.js";
-import { lowStockSuggestions } from "../domain/reorder.js";
+import { shortbookItems } from "../domain/reorder.js";
 import { reserveNumber } from "../domain/bill-numbering.js";
 import { getSetting } from "./settings.js";
 import { enqueueAndSendNow } from "../domain/notifications.js";
@@ -34,7 +34,7 @@ export interface SuggestedLine {
 // remaining stock is near expiry (see domain/reorder.ts).
 export async function suggestedPurchaseOrderLines() {
   const db = requirePool();
-  const { suggestions: lowStock, clearanceCandidates } = await lowStockSuggestions();
+  const { items: lowStock, clearanceCandidates } = await shortbookItems();
 
   const { rows: openRequests } = await db.query(
     `SELECT cr.id, cr.product_id, cr.quantity_requested_units

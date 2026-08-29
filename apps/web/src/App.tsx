@@ -34,6 +34,7 @@ import AccountingPage from "./pages/AccountingPage.js";
 import FinancialsPage from "./pages/FinancialsPage.js";
 import HomePage from "./pages/HomePage.js";
 import ActivityLogsPage from "./pages/ActivityLogsPage.js";
+import OrderBookPage from "./pages/OrderBookPage.js";
 
 type Tab =
   | "home"
@@ -41,7 +42,7 @@ type Tab =
   | "cycle-counts" | "cold-chain" | "expiry-audit" | "write-offs" | "reports"
   | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
   | "delivery-orders" | "pick-pack" | "rider" | "staff" | "inventory" | "settings" | "whatsapp-inbox" | "chronic"
-  | "accounting" | "financials" | "activity-logs";
+  | "accounting" | "financials" | "activity-logs" | "order-book";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -99,6 +100,9 @@ export default function App() {
           <button className={tab === "requests" ? "active" : ""} onClick={() => setTab("requests")}>Requests</button>
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "purchase-orders" ? "active" : ""} onClick={() => setTab("purchase-orders")}>Purchase orders</button>
+          )}
+          {(user.role === "owner" || user.role === "store_manager") && (
+            <button className={tab === "order-book" ? "active" : ""} onClick={() => setTab("order-book")}>Order book</button>
           )}
           <button className={tab === "cycle-counts" ? "active" : ""} onClick={() => setTab("cycle-counts")}>Cycle counts</button>
           <button className={tab === "cold-chain" ? "active" : ""} onClick={() => setTab("cold-chain")}>Cold chain</button>
@@ -188,6 +192,7 @@ export default function App() {
             {tab === "putaway" && <PutAwayPage />}
             {tab === "requests" && <RequestBookPage onFulfillAtPos={fulfillAtPos} />}
             {tab === "purchase-orders" && <PurchaseOrdersPage />}
+            {tab === "order-book" && <OrderBookPage />}
             {tab === "cycle-counts" && <CycleCountPage />}
             {tab === "cold-chain" && <ColdChainPage />}
             {tab === "expiry-audit" && <ExpiryAuditPage />}

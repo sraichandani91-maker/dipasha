@@ -46,6 +46,7 @@ import financialSummaryRoutes from "./routes/financial-summary.js";
 import ewayBillRoutes from "./routes/eway-bills.js";
 import ownerDashboardRoutes from "./routes/owner-dashboard.js";
 import activityFeedRoutes from "./routes/activity-feed.js";
+import shortbookRoutes from "./routes/shortbook.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -122,6 +123,7 @@ export function buildServer(): FastifyInstance {
   app.register(ewayBillRoutes);
   app.register(ownerDashboardRoutes);
   app.register(activityFeedRoutes);
+  app.register(shortbookRoutes);
 
   app.get("/health", async (_req, reply) => {
     const dbOk = await pingDatabase().catch(() => false);

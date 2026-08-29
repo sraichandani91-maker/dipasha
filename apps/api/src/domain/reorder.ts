@@ -6,16 +6,6 @@ function requirePool() {
   return pool;
 }
 
-export interface LowStockSuggestion {
-  productId: string;
-  productName: string;
-  currentSellableStock: number;
-  avgDailyUnits: number;
-  reorderLevel: number;
-  suggestedQty: number;
-  seasonalityMultiplier: number;
-}
-
 export interface ClearanceCandidate {
   productId: string;
   productName: string;
@@ -23,34 +13,70 @@ export interface ClearanceCandidate {
   totalSellableStock: number;
 }
 
+export interface ShortbookSettings {
+  minStockDays: number;
+  maxStockDays: number;
+  reorderPointDays: number;
+  demandCalcPeriodDays: number;
+  seasonalityEnabled: boolean;
+}
+
+export async function getShortbookSettings(): Promise<ShortbookSettings> {
+  const [minStockDays, maxStockDays, reorderPointDays, demandCalcPeriodDays, seasonalityEnabled] = await Promise.all([
+    getSetting("shortbook_min_stock_days", 3),
+    getSetting("shortbook_max_stock_days", 14),
+    getSetting("shortbook_reorder_point_days", 2),
+    getSetting("shortbook_demand_calc_period_days", 30),
+    getSetting("shortbook_seasonality_enabled", false),
+  ]);
+  return { minStockDays, maxStockDays, reorderPointDays, demandCalcPeriodDays, seasonalityEnabled };
+}
+
+export interface ShortbookItem {
+  productId: string;
+  productName: string;
+  currentStock: number;
+  avgDailyDemand: number;
+  daysOfCover: number | null;
+  suggestedQty: number;
+  seasonalityMultiplier: number;
+}
+
 /**
- * Section 6B.3 / 9A.7: "below reorder level, computed from sales
- * velocity, not a fixed number." No default trailing window, lead time
- * or safety buffer is given anywhere in the brief for this — the values
- * used here are seeded, owner-editable settings (see the M5 migration
- * and DECISIONS.md), not a hardcoded business rule.
+ * "Order book" / Shortbook — days-of-cover reorder model (owner asked for
+ * this after seeing a competitor app's Shortbook Settings: min/max stock
+ * in days, reorder point in days, a demand-calculation period, and an
+ * optional same-period-last-year blend), replacing the old trailing-
+ * window + lead-time + safety-buffer-percent model this file used to
+ * hold. A SKU is "short" once its remaining days of cover fall to or
+ * below the reorder point; a reorder brings it back up to max stock
+ * days' worth of cover.
  *
- * Also: "never suggest reordering a SKU whose existing stock is near
- * expiry — surface that as a clearance action instead." A SKU whose
- * entire remaining sellable stock sits inside the near-expiry window is
- * dropped from suggestions and returned separately — buying more of
- * something that needs clearing out is the wrong move even if velocity
- * math alone would say "reorder."
+ * Same "never suggest reordering a SKU whose remaining stock is near
+ * expiry" rule as before — those are returned separately as clearance
+ * candidates rather than folded into the suggestion, unchanged from the
+ * prior model.
  */
-export async function lowStockSuggestions(): Promise<{ suggestions: LowStockSuggestion[]; clearanceCandidates: ClearanceCandidate[] }> {
+export async function shortbookItems(): Promise<{ items: ShortbookItem[]; clearanceCandidates: ClearanceCandidate[] }> {
   const db = requirePool();
-  const windowDays = await getSetting("reorder_trailing_window_days", 14);
-  const leadTimeDays = await getSetting("reorder_default_lead_time_days", 7);
-  const bufferPercent = await getSetting("reorder_safety_buffer_percent", 20);
+  const settings = await getShortbookSettings();
   const nearExpiryDays = await getSetting("near_expiry_pick_block_days", 30);
 
   const { rows } = await db.query(
     `
-    WITH velocity AS (
+    WITH current_demand AS (
       SELECT product_id, SUM(-quantity_delta)::numeric / $1 AS avg_daily_units
       FROM movement_ledger
       WHERE movement_type IN ('gst_sale', 'stock_issue')
         AND created_at > now() - ($1 || ' days')::interval
+      GROUP BY product_id
+    ),
+    prior_year_demand AS (
+      SELECT product_id, SUM(-quantity_delta)::numeric / $1 AS avg_daily_units
+      FROM movement_ledger
+      WHERE movement_type IN ('gst_sale', 'stock_issue')
+        AND created_at <= now() - interval '1 year'
+        AND created_at > now() - interval '1 year' - ($1 || ' days')::interval
       GROUP BY product_id
     ),
     current_stock AS (
@@ -59,51 +85,64 @@ export async function lowStockSuggestions(): Promise<{ suggestions: LowStockSugg
     near_expiry_stock AS (
       SELECT s.product_id, SUM(s.quantity_base_units)::int AS qty
       FROM sellable_stock s JOIN batches b ON b.id = s.batch_id
-      WHERE b.expiry_date <= CURRENT_DATE + ($4 || ' days')::interval
+      WHERE b.expiry_date <= CURRENT_DATE + ($2 || ' days')::interval
       GROUP BY s.product_id
     )
     SELECT p.id AS product_id, p.name AS product_name, p.seasonality_multiplier,
-      COALESCE(cs.qty, 0) AS current_sellable_stock,
-      COALESCE(v.avg_daily_units, 0) AS avg_daily_units,
-      CEIL(COALESCE(v.avg_daily_units, 0) * $2 * (1 + $3::numeric / 100) * p.seasonality_multiplier)::int AS reorder_level,
+      COALESCE(cs.qty, 0) AS current_stock,
+      COALESCE(cd.avg_daily_units, 0) AS current_avg_daily_units,
+      COALESCE(pyd.avg_daily_units, 0) AS prior_year_avg_daily_units,
       COALESCE(nes.qty, 0) AS near_expiry_stock
     FROM products p
-    LEFT JOIN velocity v ON v.product_id = p.id
+    LEFT JOIN current_demand cd ON cd.product_id = p.id
+    LEFT JOIN prior_year_demand pyd ON pyd.product_id = p.id
     LEFT JOIN current_stock cs ON cs.product_id = p.id
     LEFT JOIN near_expiry_stock nes ON nes.product_id = p.id
     WHERE p.status = 'active'
     `,
-    [windowDays, leadTimeDays, bufferPercent, nearExpiryDays]
+    [settings.demandCalcPeriodDays, nearExpiryDays]
   );
 
-  const suggestions: LowStockSuggestion[] = [];
+  const items: ShortbookItem[] = [];
   const clearanceCandidates: ClearanceCandidate[] = [];
 
   for (const r of rows) {
-    const suggestedQty = Math.max(0, r.reorder_level - r.current_sellable_stock);
-    if (suggestedQty <= 0) continue;
+    const seasonalityMultiplier = Number(r.seasonality_multiplier);
+    const currentAvg = Number(r.current_avg_daily_units);
+    const priorYearAvg = Number(r.prior_year_avg_daily_units);
+    const blended = settings.seasonalityEnabled && priorYearAvg > 0 ? (currentAvg + priorYearAvg) / 2 : currentAvg;
+    const avgDailyDemand = blended * seasonalityMultiplier;
+    const currentStock = r.current_stock as number;
 
-    const allRemainingStockIsNearExpiry = r.current_sellable_stock > 0 && r.near_expiry_stock >= r.current_sellable_stock;
+    const daysOfCover = avgDailyDemand > 0 ? currentStock / avgDailyDemand : null;
+    const isShort = daysOfCover !== null && daysOfCover <= settings.reorderPointDays;
+    if (!isShort) continue;
+
+    const allRemainingStockIsNearExpiry = currentStock > 0 && r.near_expiry_stock >= currentStock;
     if (allRemainingStockIsNearExpiry) {
       clearanceCandidates.push({
         productId: r.product_id,
         productName: r.product_name,
         nearExpiryStock: r.near_expiry_stock,
-        totalSellableStock: r.current_sellable_stock,
+        totalSellableStock: currentStock,
       });
       continue;
     }
 
-    suggestions.push({
+    const targetStockQty = Math.ceil(avgDailyDemand * settings.maxStockDays);
+    const suggestedQty = Math.max(0, targetStockQty - currentStock);
+    if (suggestedQty <= 0) continue;
+
+    items.push({
       productId: r.product_id,
       productName: r.product_name,
-      currentSellableStock: r.current_sellable_stock,
-      avgDailyUnits: Number(r.avg_daily_units),
-      reorderLevel: r.reorder_level,
+      currentStock,
+      avgDailyDemand,
+      daysOfCover,
       suggestedQty,
-      seasonalityMultiplier: Number(r.seasonality_multiplier),
+      seasonalityMultiplier,
     });
   }
 
-  return { suggestions, clearanceCandidates };
+  return { items, clearanceCandidates };
 }
