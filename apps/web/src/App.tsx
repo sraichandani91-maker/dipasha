@@ -33,6 +33,7 @@ import ChronicPage from "./pages/ChronicPage.js";
 import AccountingPage from "./pages/AccountingPage.js";
 import FinancialsPage from "./pages/FinancialsPage.js";
 import HomePage from "./pages/HomePage.js";
+import ActivityLogsPage from "./pages/ActivityLogsPage.js";
 
 type Tab =
   | "home"
@@ -40,7 +41,7 @@ type Tab =
   | "cycle-counts" | "cold-chain" | "expiry-audit" | "write-offs" | "reports"
   | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
   | "delivery-orders" | "pick-pack" | "rider" | "staff" | "inventory" | "settings" | "whatsapp-inbox" | "chronic"
-  | "accounting" | "financials";
+  | "accounting" | "financials" | "activity-logs";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"];
 
@@ -152,6 +153,9 @@ export default function App() {
           {user.role === "owner" && (
             <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>Settings</button>
           )}
+          {user.role === "owner" && (
+            <button className={tab === "activity-logs" ? "active" : ""} onClick={() => setTab("activity-logs")}>Activity logs</button>
+          )}
         </nav>
         <div className="spacer" />
         {user.impersonating && <span className="impersonating">IMPERSONATING {user.role.toUpperCase()}</span>}
@@ -204,6 +208,7 @@ export default function App() {
             {tab === "rider" && <RiderPage />}
             {tab === "staff" && <StaffPage />}
             {tab === "settings" && <SettingsPage />}
+            {tab === "activity-logs" && <ActivityLogsPage />}
           </>
         )}
       </div>

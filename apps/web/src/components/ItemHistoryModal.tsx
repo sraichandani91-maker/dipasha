@@ -22,6 +22,45 @@ interface PurchaseHistoryRow {
   line_total: string;
 }
 
+interface BatchChangeRow {
+  id: string;
+  created_at: string;
+  field: string;
+  old_value: string;
+  new_value: string;
+  reason_code: string;
+  note: string;
+  batch_no: string;
+  actor_name: string;
+}
+
+interface StockChangeRow {
+  id: string;
+  created_at: string;
+  movement_type: string;
+  quantity_delta: number;
+  reason_code: string | null;
+  note: string | null;
+  bin_code: string;
+  actor_name: string;
+}
+
+interface GroupChangeRow {
+  id: string;
+  created_at: string;
+  note: string;
+  actor_name: string;
+}
+
+const STOCK_MOVEMENT_LABELS: Record<string, string> = {
+  write_off: "write-off",
+  adjustment: "adjustment",
+  transfer: "bin transfer",
+  purchase_return: "return to vendor",
+  stock_received: "non-GST receipt",
+  stock_issue: "non-GST issue",
+};
+
 /**
  * Section 5B's F4 item ledger (owner-requested) — press F4 on a medicine
  * while searching, or click the "History" link on a search result, to see
@@ -40,7 +79,10 @@ export default function ItemHistoryModal({
   productName: string;
   onClose: () => void;
 }) {
-  const [data, setData] = useState<{ sales: SaleHistoryRow[]; purchases: PurchaseHistoryRow[] } | null>(null);
+  const [data, setData] = useState<{
+    sales: SaleHistoryRow[]; purchases: PurchaseHistoryRow[];
+    batchChanges: BatchChangeRow[]; stockChanges: StockChangeRow[]; groupChanges: GroupChangeRow[];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
 
@@ -126,7 +168,49 @@ export default function ItemHistoryModal({
                 </tbody>
               </table>
             )}
-            <p className="hint-text" style={{ marginTop: 12 }}>{openingId ? "Opening…" : "Click any row to open the original bill or purchase invoice."}</p>
+            <h4 style={{ marginBottom: 4, marginTop: 16 }}>Changes</h4>
+            <p className="hint-text" style={{ marginTop: 0 }}>
+              Every price/expiry/batch correction, stock adjustment, write-off, or bin transfer for this item — who did it and why.
+            </p>
+            {data.batchChanges.length === 0 && data.stockChanges.length === 0 && data.groupChanges.length === 0 && (
+              <p className="hint-text">No corrections or non-sale stock changes recorded for this item.</p>
+            )}
+            {(data.batchChanges.length > 0 || data.stockChanges.length > 0 || data.groupChanges.length > 0) && (
+              <table className="data-table">
+                <thead><tr><th>Date</th><th>Change</th><th>By</th></tr></thead>
+                <tbody>
+                  {[
+                    ...data.batchChanges.map((c) => ({
+                      created_at: c.created_at, actor_name: c.actor_name,
+                      text: `Changed ${c.field.replace(/_/g, " ")} of batch ${c.batch_no}: "${c.old_value}" → "${c.new_value}" (${c.reason_code.replace(/_/g, " ")})`,
+                    })),
+                    ...data.stockChanges.map((c) => {
+                      const qty = Number(c.quantity_delta);
+                      const verb = qty > 0 ? "Increased" : "Decreased";
+                      const label = STOCK_MOVEMENT_LABELS[c.movement_type] ?? c.movement_type.replace(/_/g, " ");
+                      return {
+                        created_at: c.created_at, actor_name: c.actor_name,
+                        text: `${verb} stock in ${c.bin_code} by ${Math.abs(qty)} unit(s) — ${label}${c.reason_code ? ` (${c.reason_code.replace(/_/g, " ")})` : ""}`,
+                      };
+                    }),
+                    ...data.groupChanges.map((c) => ({
+                      created_at: c.created_at, actor_name: c.actor_name,
+                      text: `Changed the substitute group (${c.note})`,
+                    })),
+                  ]
+                    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                    .map((c, i) => (
+                      <tr key={i}>
+                        <td style={{ whiteSpace: "nowrap" }}>{new Date(c.created_at).toLocaleString("en-IN")}</td>
+                        <td>{c.text}</td>
+                        <td>{c.actor_name}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            )}
+
+            <p className="hint-text" style={{ marginTop: 12 }}>{openingId ? "Opening…" : "Click any sale or purchase row to open the original bill or purchase invoice."}</p>
           </>
         )}
       </div>
