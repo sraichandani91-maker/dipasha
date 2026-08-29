@@ -66,6 +66,91 @@ export async function getTodayBusinessDate(): Promise<string> {
   return rows[0].d;
 }
 
+export interface ItemLedgerRow {
+  productId: string;
+  productName: string;
+  openingStock: number;
+  purchasedUnits: number;
+  soldUnits: number;
+  otherMovementUnits: number;
+  closingStock: number;
+}
+
+// Owner-requested (post-M16): "sales, purchase, and closing stock at item
+// level for a date range" — flagged as a real gap back in M7 (there
+// asked as a "reorder book") and deferred to this reporting layer, never
+// actually built after that. Same balance-reconstruction technique as
+// Financials' stock valuation (`getStockValuationAsOf`) — a product's
+// stock as of any moment is `SUM(movement_ledger.quantity_delta)` up to
+// that moment, never a separately-maintained running total — just run
+// twice (once for the day before the range starts, once for the range's
+// last day) instead of once. Purchased/sold are the two movement-type
+// groups everyone means by those words (`gst_purchase`/`stock_received`
+// and `gst_sale`/`stock_issue`); everything else that can move stock in
+// this build (returns, write-offs, adjustments, transfers) is summed
+// separately into `otherMovementUnits` rather than silently folded into
+// one of the two, so `opening + purchased - sold + other = closing`
+// always reconciles exactly instead of looking like it doesn't.
+export async function getItemLedgerReport(fromDate: string, toDate: string): Promise<ItemLedgerRow[]> {
+  const { rows } = await requirePool().query(
+    `
+    WITH opening AS (
+      SELECT b.product_id, SUM(ml.quantity_delta)::int AS qty
+      FROM movement_ledger ml JOIN batches b ON b.id = ml.batch_id
+      WHERE ml.created_at < $1::timestamptz
+      GROUP BY b.product_id
+    ),
+    closing AS (
+      SELECT b.product_id, SUM(ml.quantity_delta)::int AS qty
+      FROM movement_ledger ml JOIN batches b ON b.id = ml.batch_id
+      WHERE ml.created_at < ($2::date + 1)::timestamptz
+      GROUP BY b.product_id
+    ),
+    purchased AS (
+      SELECT b.product_id, SUM(ml.quantity_delta)::int AS qty
+      FROM movement_ledger ml JOIN batches b ON b.id = ml.batch_id
+      WHERE ml.movement_type IN ('gst_purchase', 'stock_received')
+        AND ml.created_at >= $1::timestamptz AND ml.created_at < ($2::date + 1)::timestamptz
+      GROUP BY b.product_id
+    ),
+    sold AS (
+      SELECT b.product_id, SUM(-ml.quantity_delta)::int AS qty
+      FROM movement_ledger ml JOIN batches b ON b.id = ml.batch_id
+      WHERE ml.movement_type IN ('gst_sale', 'stock_issue')
+        AND ml.created_at >= $1::timestamptz AND ml.created_at < ($2::date + 1)::timestamptz
+      GROUP BY b.product_id
+    ),
+    other AS (
+      SELECT b.product_id, SUM(ml.quantity_delta)::int AS qty
+      FROM movement_ledger ml JOIN batches b ON b.id = ml.batch_id
+      WHERE ml.movement_type NOT IN ('gst_purchase', 'stock_received', 'gst_sale', 'stock_issue')
+        AND ml.created_at >= $1::timestamptz AND ml.created_at < ($2::date + 1)::timestamptz
+      GROUP BY b.product_id
+    )
+    SELECT p.id AS product_id, p.name AS product_name,
+      COALESCE(o.qty, 0) AS opening_stock,
+      COALESCE(pu.qty, 0) AS purchased_units,
+      COALESCE(s.qty, 0) AS sold_units,
+      COALESCE(ot.qty, 0) AS other_movement_units,
+      COALESCE(c.qty, 0) AS closing_stock
+    FROM products p
+    LEFT JOIN opening o ON o.product_id = p.id
+    LEFT JOIN closing c ON c.product_id = p.id
+    LEFT JOIN purchased pu ON pu.product_id = p.id
+    LEFT JOIN sold s ON s.product_id = p.id
+    LEFT JOIN other ot ON ot.product_id = p.id
+    WHERE COALESCE(o.qty, 0) <> 0 OR COALESCE(c.qty, 0) <> 0 OR COALESCE(pu.qty, 0) <> 0 OR COALESCE(s.qty, 0) <> 0
+    ORDER BY p.name
+    `,
+    [fromDate, toDate]
+  );
+  return rows.map((r) => ({
+    productId: r.product_id, productName: r.product_name,
+    openingStock: r.opening_stock, purchasedUnits: r.purchased_units, soldUnits: r.sold_units,
+    otherMovementUnits: r.other_movement_units, closingStock: r.closing_stock,
+  }));
+}
+
 export async function listDailyReports(limit = 30) {
   const { rows } = await requirePool().query(
     `SELECT id, business_date, generated_at, summary FROM daily_reports ORDER BY business_date DESC LIMIT $1`,

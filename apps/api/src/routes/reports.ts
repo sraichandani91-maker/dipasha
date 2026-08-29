@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { scheduleHRegister, computeDailySummary, getTodayBusinessDate, listDailyReports } from "../repo/reports.js";
+import { scheduleHRegister, computeDailySummary, getTodayBusinessDate, listDailyReports, getItemLedgerReport } from "../repo/reports.js";
 import { listManualOverrides } from "../repo/manual-overrides.js";
 import { runReadOnlyQuery, SqlConsoleError } from "../repo/sql-console.js";
+import { sendCsvAttachment } from "../lib/csv.js";
 
 // Section 9A.1 privacy note: prescriber/patient reporting restricted to
 // Owner and Store Manager — this links patients to prescriptions.
@@ -38,6 +39,23 @@ export default async function reportRoutes(app: FastifyInstance) {
     { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
     async (_req, reply) => {
       reply.send(await computeDailySummary(await getTodayBusinessDate()));
+    }
+  );
+
+  // Owner-requested, post-M16: "sales, purchase, and closing stock at
+  // item level for a date range" — the report first asked about back in
+  // M7 as a "reorder book" and deferred here, now built.
+  app.get(
+    "/reports/item-ledger",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const q = z.object({ from: z.string(), to: z.string(), format: z.enum(["json", "csv"]).optional() }).safeParse(req.query);
+      if (!q.success) return reply.code(400).send({ error: "invalid_query", details: "from and to (YYYY-MM-DD) required" });
+      const rows = await getItemLedgerReport(q.data.from, q.data.to);
+      if (q.data.format === "csv") {
+        return sendCsvAttachment(reply, `item-ledger-${q.data.from}-to-${q.data.to}`, rows as unknown as Array<Record<string, unknown>>);
+      }
+      reply.send(rows);
     }
   );
 

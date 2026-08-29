@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, downloadFile } from "../api.js";
 import { useAuth } from "../auth/AuthContext.js";
+import ItemHistoryModal from "../components/ItemHistoryModal.js";
 
-type Tab = "dashboard" | "registers" | "gstr1" | "gstr3b" | "traceability" | "inventory" | "exceptions" | "sync-conflicts" | "manual-overrides" | "daily-reports" | "sql-console";
+type Tab = "dashboard" | "registers" | "gstr1" | "gstr3b" | "item-ledger" | "traceability" | "inventory" | "exceptions" | "sync-conflicts" | "manual-overrides" | "daily-reports" | "sql-console";
 
 function defaultRange() {
   const now = new Date();
@@ -20,7 +21,8 @@ const DISCLAIMER = "Working file for your accountant's review — computed from 
  * (10A.6): these are working files for a human to review, not
  * filing-ready output.
  */
-const RANGE_TABS: Tab[] = ["registers", "gstr1", "gstr3b"];
+const RANGE_TABS: Tab[] = ["registers", "gstr1", "gstr3b", "item-ledger"];
+const STATUTORY_DISCLAIMER_TABS: Tab[] = ["registers", "gstr1", "gstr3b"];
 
 export default function ReportsPage() {
   const { user } = useAuth();
@@ -35,7 +37,7 @@ export default function ReportsPage() {
       <div style={{ display: "flex", gap: 4, marginBottom: 12, flexWrap: "wrap" }}>
         {([
           ["dashboard", "Dashboard"],
-          ["registers", "Registers"], ["gstr1", "GSTR-1"], ["gstr3b", "GSTR-3B"],
+          ["registers", "Registers"], ["gstr1", "GSTR-1"], ["gstr3b", "GSTR-3B"], ["item-ledger", "Item ledger"],
           ["traceability", "Batch traceability"], ["inventory", "Location-wise inventory"], ["exceptions", "Negative stock"],
           ["sync-conflicts", "Sync conflicts"], ["manual-overrides", "Manual overrides"], ["daily-reports", "Daily reports"],
           ...(isOwner ? ([["sql-console", "SQL console"]] as Array<[Tab, string]>) : []),
@@ -48,7 +50,9 @@ export default function ReportsPage() {
 
       {RANGE_TABS.includes(tab) && (
         <>
-          <p className="hint-text" style={{ background: "color-mix(in srgb, var(--status-warn) 10%, white)", padding: 8, borderRadius: 6 }}>{DISCLAIMER}</p>
+          {STATUTORY_DISCLAIMER_TABS.includes(tab) && (
+            <p className="hint-text" style={{ background: "color-mix(in srgb, var(--status-warn) 10%, white)", padding: 8, borderRadius: 6 }}>{DISCLAIMER}</p>
+          )}
           <div className="card" style={{ marginBottom: 12, display: "flex", gap: 12, alignItems: "flex-end" }}>
             <div className="field"><label>From</label><input type="date" value={range.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} /></div>
             <div className="field"><label>To</label><input type="date" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} /></div>
@@ -59,6 +63,7 @@ export default function ReportsPage() {
       {tab === "registers" && <RegistersTab range={range} />}
       {tab === "gstr1" && <Gstr1Tab range={range} />}
       {tab === "gstr3b" && <Gstr3bTab range={range} />}
+      {tab === "item-ledger" && <ItemLedgerTab range={range} />}
       {tab === "traceability" && <TraceabilityTab />}
       {tab === "inventory" && <InventoryTab />}
       {tab === "exceptions" && <ExceptionsTab />}
@@ -313,6 +318,78 @@ function RegistersTab({ range }: { range: { from: string; to: string } }) {
           </button>
         </div>
       ))}
+    </div>
+  );
+}
+
+interface ItemLedgerRow {
+  productId: string;
+  productName: string;
+  openingStock: number;
+  purchasedUnits: number;
+  soldUnits: number;
+  otherMovementUnits: number;
+  closingStock: number;
+}
+
+/**
+ * Owner-requested, post-M16 — "sales, purchase, and closing stock at
+ * item level for a date range." Flagged as a real gap back in M7 (asked
+ * then as a "reorder book") and deferred to this reporting layer, built
+ * now. Opening/closing stock are reconstructed from the movement ledger
+ * for the day before the range starts and the range's last day — the
+ * same technique Financials' stock valuation already uses for "stock as
+ * of any date." Purchased/sold are gross units; anything else that moved
+ * stock in the range (returns, write-offs, adjustments, transfers) is
+ * its own "Other" column so opening + purchased − sold + other always
+ * equals closing, instead of silently not adding up.
+ */
+function ItemLedgerTab({ range }: { range: { from: string; to: string } }) {
+  const [rows, setRows] = useState<ItemLedgerRow[] | null>(null);
+  const [search, setSearch] = useState("");
+  const [historyTarget, setHistoryTarget] = useState<{ id: string; name: string } | null>(null);
+
+  async function load() {
+    setRows(await api.get(`/reports/item-ledger?from=${range.from}&to=${range.to}`));
+  }
+
+  const filtered = (rows ?? []).filter((r) => r.productName.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button className="btn-primary" onClick={load}>Load</button>
+        <button className="btn-secondary" onClick={() => downloadFile(`/reports/item-ledger?from=${range.from}&to=${range.to}&format=csv`, `item-ledger-${range.from}-to-${range.to}.csv`)}>
+          Download CSV
+        </button>
+        {rows && <input placeholder="Filter by item name…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 220 }} />}
+      </div>
+      {rows && (
+        <div className="card">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Item</th><th>Opening stock</th><th>Purchased</th><th>Sold</th><th>Other movements</th><th>Closing stock</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <tr key={r.productId}>
+                  <td>{r.productName}</td>
+                  <td>{r.openingStock}</td>
+                  <td>{r.purchasedUnits}</td>
+                  <td>{r.soldUnits}</td>
+                  <td className="hint-text">{r.otherMovementUnits}</td>
+                  <td>{r.closingStock}</td>
+                  <td><button className="btn-secondary" onClick={() => setHistoryTarget({ id: r.productId, name: r.productName })}>History</button></td>
+                </tr>
+              ))}
+              {filtered.length === 0 && <tr><td colSpan={7} className="hint-text">No stock movement for this range.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {historyTarget && <ItemHistoryModal productId={historyTarget.id} productName={historyTarget.name} onClose={() => setHistoryTarget(null)} />}
     </div>
   );
 }
