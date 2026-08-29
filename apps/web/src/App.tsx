@@ -35,6 +35,7 @@ import FinancialsPage from "./pages/FinancialsPage.js";
 import HomePage from "./pages/HomePage.js";
 import ActivityLogsPage from "./pages/ActivityLogsPage.js";
 import OrderBookPage from "./pages/OrderBookPage.js";
+import Logo from "./components/Logo.js";
 
 type Tab =
   | "home"
@@ -74,7 +75,13 @@ export default function App() {
   return (
     <div className="app-shell" style={{ flexDirection: "column" }}>
       <div className="topbar">
-        <span className="brand">Dipasha Console</span>
+        <span className="brand">
+          <Logo size={30} withBadge />
+          <span className="brand-text">
+            <span className="brand-name">Dipasha Medical Store</span>
+            <span className="brand-tagline">because we care..</span>
+          </span>
+        </span>
         <nav>
           {user.role === "owner" && (
             <button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}>Home</button>

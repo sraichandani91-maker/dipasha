@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, ApiError } from "../api.js";
 import { useAuth } from "../auth/AuthContext.js";
+import Logo from "../components/Logo.js";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -43,7 +44,9 @@ export default function LoginPage() {
   return (
     <div className="login-shell">
       <div className="login-card">
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><Logo size={56} /></div>
         <h1>Dipasha Medical Store</h1>
+        <p className="sub" style={{ marginBottom: 2 }}>because we care..</p>
         <p className="sub">Staff console — sign in with your phone</p>
 
         {step === "phone" ? (
