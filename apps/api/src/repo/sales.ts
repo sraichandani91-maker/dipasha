@@ -2,7 +2,6 @@ import { pool } from "../db.js";
 import { allocateFefo, getSpecificBatchStock, InsufficientStockError } from "../domain/fefo.js";
 import { billSeriesPrefix, reserveNumber } from "../domain/bill-numbering.js";
 import { findOrCreateCustomer } from "./customers.js";
-import { enqueueNotification } from "../domain/notifications.js";
 import { recomputeChronicFromHistory } from "./chronic.js";
 
 function requirePool() {
@@ -354,25 +353,13 @@ export async function createSale(input: CreateSaleInput) {
       }
     }
 
-    // Section 12A.2: "sends immediately on bill save, if the phone number
-    // is present." Enqueues only — this is a plain DB insert inside the
-    // same transaction as the sale, so it's atomic with it and never
-    // makes the bill wait on a network call. The background dispatcher
-    // (domain/notifications.ts, polled from index.ts) does the actual
-    // send after this transaction commits.
-    if (sale.customer_phone) {
-      await enqueueNotification(client, {
-        triggerType: "bill_generated",
-        category: "transactional",
-        templateKey: "whatsapp_template_bill_generated",
-        triggerEnabledSettingKey: "whatsapp_trigger_bill_generated_enabled",
-        recipientCustomerId: customer?.id ?? null,
-        recipientPhone: sale.customer_phone,
-        referenceType: "sale",
-        referenceId: sale.id,
-        payload: { billNumber: sale.bill_number, date: sale.created_at, grandTotal, customerName: sale.customer_name },
-      });
-    }
+    // Owner-requested reversal of Section 12A.2's "sends immediately on
+    // bill save": a WhatsApp send is a deliberate biller action, not a
+    // silent side effect of completing the sale. The POS screen's
+    // post-save panel offers Print and Send via WhatsApp side by side
+    // (PosPage.tsx's completedBill card) — nothing is enqueued here.
+    // POST /sales/:id/send-whatsapp (routes/sales.ts) is the only place
+    // a `bill_generated` notification gets enqueued now.
 
     await client.query("COMMIT");
     return { id: sale.id, billNumber: sale.bill_number, createdAt: sale.created_at, customerPhone: sale.customer_phone, taxableValueTotal: round2(taxableValueTotal), taxTotal: round2(taxTotal), grandTotal, changeDue };
