@@ -13,6 +13,48 @@ function requirePool() {
  * cost/margin math and counted separately, never treated as zero cost.
  */
 
+// Owner Home dashboard's "Slow Moving" / "Fast Moving" tabs — quantity
+// actually sold in the range against current stock on hand, not a margin
+// figure. Fast movers: highest qty sold, descending. Slow movers: active
+// products that still hold stock but sold least (zero-sales products
+// included, since "in stock and not moving" is exactly what this list is
+// for) — a product with zero stock left is never interesting here
+// regardless of its sales history, so it's excluded rather than shown as
+// a false "slow mover."
+export async function getProductVelocity(fromDate: string, toDate: string, limit = 10) {
+  const { rows } = await requirePool().query(
+    `
+    WITH sold AS (
+      SELECT sl.product_id, SUM(sl.quantity_base_units)::int AS qty_sold, MAX(s.business_date) AS last_sold_date
+      FROM sale_lines sl JOIN sales s ON s.id = sl.sale_id
+      WHERE s.status = 'completed' AND s.business_date BETWEEN $1 AND $2
+      GROUP BY sl.product_id
+    ),
+    stock_on_hand AS (
+      SELECT product_id, SUM(quantity_base_units)::int AS stock FROM stock GROUP BY product_id
+    )
+    SELECT p.id AS product_id, p.name AS product_name, p.manufacturer,
+      COALESCE(so.qty_sold, 0) AS qty_sold, COALESCE(soh.stock, 0) AS stock, so.last_sold_date
+    FROM products p
+    LEFT JOIN sold so ON so.product_id = p.id
+    LEFT JOIN stock_on_hand soh ON soh.product_id = p.id
+    WHERE p.status = 'active'
+    `,
+    [fromDate, toDate]
+  );
+  const mapped = rows.map((r: any) => ({
+    productId: r.product_id,
+    productName: r.product_name,
+    manufacturer: r.manufacturer,
+    qtySold: Number(r.qty_sold),
+    stock: Number(r.stock),
+    lastSoldDate: r.last_sold_date,
+  }));
+  const fastMoving = [...mapped].filter((r) => r.qtySold > 0).sort((a, b) => b.qtySold - a.qtySold).slice(0, limit);
+  const slowMoving = [...mapped].filter((r) => r.stock > 0).sort((a, b) => a.qtySold - b.qtySold).slice(0, limit);
+  return { fastMoving, slowMoving };
+}
+
 export async function marginBySku(fromDate: string, toDate: string) {
   const { rows } = await requirePool().query(
     `

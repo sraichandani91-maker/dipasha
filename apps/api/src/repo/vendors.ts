@@ -161,6 +161,53 @@ export async function getVendorAgeingReport() {
   return rows;
 }
 
+// Owner Home dashboard's "Due Payments > Distributor" tab — per-vendor
+// total outstanding plus the single oldest unpaid invoice (number +
+// computed due date), the payable-side mirror of getCustomerDuesList().
+// Same allocations/debits CTEs as getVendorBalance, grouped down to one
+// row per vendor with the oldest invoice surfaced for display.
+export async function getVendorDuesList() {
+  const { rows } = await requirePool().query(`
+    WITH allocations AS (
+      SELECT purchase_invoice_id, SUM(amount_allocated) AS allocated FROM vendor_payment_allocations GROUP BY purchase_invoice_id
+    ),
+    debits AS (
+      SELECT purchase_invoice_id, SUM(total_value) AS debited FROM vendor_debit_notes GROUP BY purchase_invoice_id
+    ),
+    outstanding AS (
+      SELECT pi.vendor_id, pi.invoice_number, pi.invoice_date, pi.payment_terms_days,
+        (pi.net_payable_computed - COALESCE(a.allocated, 0) - COALESCE(d.debited, 0))::numeric(14,2) AS outstanding
+      FROM purchase_invoices pi
+      LEFT JOIN allocations a ON a.purchase_invoice_id = pi.id
+      LEFT JOIN debits d ON d.purchase_invoice_id = pi.id
+      WHERE (pi.net_payable_computed - COALESCE(a.allocated, 0) - COALESCE(d.debited, 0)) > 0.005
+    )
+    SELECT v.id AS vendor_id, v.name,
+      SUM(o.outstanding)::numeric(14,2) AS total_due,
+      (array_agg(o.invoice_number ORDER BY o.invoice_date))[1] AS oldest_invoice_number,
+      (array_agg(o.invoice_date ORDER BY o.invoice_date))[1] AS oldest_invoice_date,
+      (array_agg(o.payment_terms_days ORDER BY o.invoice_date))[1] AS oldest_payment_terms_days
+    FROM vendors v
+    JOIN outstanding o ON o.vendor_id = v.id
+    GROUP BY v.id, v.name
+    HAVING SUM(o.outstanding) > 0.005
+    ORDER BY total_due DESC
+  `);
+  return rows.map((r: any) => ({
+    vendorId: r.vendor_id,
+    name: r.name,
+    totalDue: Number(r.total_due),
+    oldestInvoiceNumber: r.oldest_invoice_number,
+    dueDate: addDays(r.oldest_invoice_date, r.oldest_payment_terms_days),
+  }));
+}
+
+function addDays(isoDate: string, days: number): string {
+  const d = new Date(isoDate);
+  d.setDate(d.getDate() + Number(days));
+  return d.toISOString().slice(0, 10);
+}
+
 export interface RecordVendorPaymentInput {
   vendorId: string;
   amount: number;

@@ -109,6 +109,24 @@ export interface FinancialDailyDigestPayload {
   grossMarginPercent: number | null;
 }
 
+// Owner Home dashboard's "remind now" on a customer due-payment row —
+// same neutral, non-threatening tone as every other outbound WhatsApp
+// text in this build; never a dunning/collections message.
+export interface PaymentDueReminderPayload {
+  customerName: string;
+  amountDue: number;
+  dueDate: string; // ISO date
+}
+
+function buildPaymentDueReminderText(p: PaymentDueReminderPayload): string {
+  const date = new Date(p.dueDate).toLocaleDateString("en-IN");
+  return [
+    `Hi ${p.customerName}, this is a reminder from Dipasha Medical Store — ₹${p.amountDue.toFixed(2)} is outstanding on your account, due ${date}.`,
+    ``,
+    `Reply to this message or visit the store to settle it. Thank you.`,
+  ].join("\n");
+}
+
 export function buildWhatsAppText(triggerType: string, payload: Record<string, unknown>): string {
   switch (triggerType) {
     case "bill_generated":
@@ -135,6 +153,8 @@ export function buildWhatsAppText(triggerType: string, payload: Record<string, u
       return buildPOSentText(payload as unknown as POSentPayload);
     case "financial_daily_digest":
       return buildFinancialDailyDigestText(payload as unknown as FinancialDailyDigestPayload);
+    case "payment_due_reminder":
+      return buildPaymentDueReminderText(payload as unknown as PaymentDueReminderPayload);
     default:
       throw new Error(`No WhatsApp message builder for trigger type "${triggerType}"`);
   }

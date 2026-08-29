@@ -175,6 +175,86 @@ export async function getAgeingReport() {
   return rows;
 }
 
+// Owner Home dashboard's customer tile: total customers (all-time,
+// not range-bound — matches the reference screenshot showing a bare
+// count next to a range-bound "new customers"), new customers created
+// in range, and repeat customers (>=2 completed sales in range).
+export async function getCustomerHomeStats(fromDate: string, toDate: string) {
+  const db = requirePool();
+  const [totalRows, newRows, repeatRows] = await Promise.all([
+    db.query(`SELECT COUNT(*)::int AS total FROM customers`),
+    db.query(`SELECT COUNT(*)::int AS total FROM customers WHERE created_at::date BETWEEN $1 AND $2`, [fromDate, toDate]),
+    db.query(
+      `SELECT COUNT(*)::int AS total FROM (
+         SELECT customer_id FROM sales
+         WHERE status = 'completed' AND customer_id IS NOT NULL AND business_date BETWEEN $1 AND $2
+         GROUP BY customer_id HAVING COUNT(*) >= 2
+       ) repeat_customers`,
+      [fromDate, toDate]
+    ),
+  ]);
+  return {
+    totalCustomers: Number(totalRows.rows[0].total),
+    newCustomers: Number(newRows.rows[0].total),
+    repeatCustomers: Number(repeatRows.rows[0].total),
+  };
+}
+
+// Owner Home dashboard's "Due Payments > Customer" tab — per-account-holder
+// total outstanding plus the single oldest unpaid bill (number + computed
+// due date), not the bucketed ageing totals getAgeingReport() already
+// serves elsewhere. Same credit_sales/allocations shape as getAgeingReport,
+// just grouped down to one representative row per customer instead of
+// bucketed by age.
+export async function getCustomerDuesList() {
+  const { rows } = await requirePool().query(`
+    WITH credit_sales AS (
+      SELECT s.id, s.business_date, s.bill_number, cust.payment_terms_days,
+        COALESCE(cust.account_customer_id, cust.id) AS account_holder_id,
+        COALESCE(SUM(st.amount) FILTER (WHERE st.tender_type = 'credit'), 0) AS credit_amount
+      FROM sales s
+      JOIN customers cust ON cust.id = s.customer_id
+      LEFT JOIN sale_tenders st ON st.sale_id = s.id
+      WHERE s.status = 'completed'
+      GROUP BY s.id, cust.account_customer_id, cust.id, cust.payment_terms_days
+    ),
+    allocations AS (
+      SELECT sale_id, SUM(amount_allocated) AS allocated FROM customer_payment_allocations GROUP BY sale_id
+    ),
+    outstanding AS (
+      SELECT cs.account_holder_id, cs.business_date, cs.bill_number, cs.payment_terms_days,
+        (cs.credit_amount - COALESCE(a.allocated, 0))::numeric(14,2) AS outstanding
+      FROM credit_sales cs LEFT JOIN allocations a ON a.sale_id = cs.id
+      WHERE cs.credit_amount > 0 AND (cs.credit_amount - COALESCE(a.allocated, 0)) > 0.005
+    )
+    SELECT c.id AS customer_id, c.name, c.phone,
+      SUM(o.outstanding)::numeric(14,2) AS total_due,
+      (array_agg(o.bill_number ORDER BY o.business_date))[1] AS oldest_bill_number,
+      (array_agg(o.business_date ORDER BY o.business_date))[1] AS oldest_business_date,
+      (array_agg(o.payment_terms_days ORDER BY o.business_date))[1] AS oldest_payment_terms_days
+    FROM customers c
+    JOIN outstanding o ON o.account_holder_id = c.id
+    WHERE c.account_customer_id IS NULL
+    GROUP BY c.id, c.name, c.phone
+    HAVING SUM(o.outstanding) > 0.005
+    ORDER BY total_due DESC
+  `);
+  return rows.map((r: any) => ({
+    customerId: r.customer_id,
+    name: r.name,
+    phone: r.phone,
+    totalDue: Number(r.total_due),
+    oldestBillNumber: r.oldest_bill_number,
+    dueDate: addDays(r.oldest_business_date, r.oldest_payment_terms_days),
+  }));
+}
+
+function addDays(isoDate: string, days: number): string {
+  const d = new Date(isoDate);
+  d.setDate(d.getDate() + Number(days));
+  return d.toISOString().slice(0, 10);
+}
+
 export interface RecordPaymentInput {
   customerId: string; // account holder
   amount: number;

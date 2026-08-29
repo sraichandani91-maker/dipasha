@@ -44,6 +44,7 @@ import chronicRoutes from "./routes/chronic.js";
 import accountingRoutes from "./routes/accounting.js";
 import financialSummaryRoutes from "./routes/financial-summary.js";
 import ewayBillRoutes from "./routes/eway-bills.js";
+import ownerDashboardRoutes from "./routes/owner-dashboard.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -118,6 +119,7 @@ export function buildServer(): FastifyInstance {
   app.register(accountingRoutes);
   app.register(financialSummaryRoutes);
   app.register(ewayBillRoutes);
+  app.register(ownerDashboardRoutes);
 
   app.get("/health", async (_req, reply) => {
     const dbOk = await pingDatabase().catch(() => false);

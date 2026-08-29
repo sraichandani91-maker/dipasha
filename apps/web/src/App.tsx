@@ -32,8 +32,10 @@ import WhatsAppInboxPage from "./pages/WhatsAppInboxPage.js";
 import ChronicPage from "./pages/ChronicPage.js";
 import AccountingPage from "./pages/AccountingPage.js";
 import FinancialsPage from "./pages/FinancialsPage.js";
+import HomePage from "./pages/HomePage.js";
 
 type Tab =
+  | "home"
   | "pos" | "products" | "bins" | "purchases" | "stock-received" | "putaway" | "requests" | "purchase-orders"
   | "cycle-counts" | "cold-chain" | "expiry-audit" | "write-offs" | "reports"
   | "prescribers" | "margins" | "customers" | "vendor-comparison" | "notifications" | "scan-invoice"
@@ -52,8 +54,11 @@ export default function App() {
   // (Section 8: "Rider logs in, sees assigned trips only") — `user` only
   // resolves after an async /auth/me call, so this can't be `tab`'s
   // initial useState value; it has to catch up once the role is known.
+  // Same reasoning for Owner landing on the new Home dashboard instead —
+  // it's the actual "homepage" this was modelled on.
   useEffect(() => {
     if (user?.role === "rider") setTab("rider");
+    else if (user?.role === "owner") setTab("home");
   }, [user?.role]);
 
   function fulfillAtPos(req: FulfillRequest) {
@@ -69,6 +74,9 @@ export default function App() {
       <div className="topbar">
         <span className="brand">Dipasha Console</span>
         <nav>
+          {user.role === "owner" && (
+            <button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}>Home</button>
+          )}
           {(user.role === "owner" || user.role === "store_manager") && (
             <button className={tab === "pos" ? "active" : ""} onClick={() => setTab("pos")}>Billing (POS)</button>
           )}
@@ -166,6 +174,7 @@ export default function App() {
           <DailyReviewScreen onDone={() => setReviewMode(false)} />
         ) : (
           <>
+            {tab === "home" && <HomePage />}
             {tab === "pos" && <PosPage fulfillRequest={fulfillRequest} onConsumeFulfillRequest={() => setFulfillRequest(null)} />}
             {tab === "products" && <ProductsPage />}
             {tab === "bins" && <BinsPage />}
