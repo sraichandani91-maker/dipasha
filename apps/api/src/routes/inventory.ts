@@ -29,7 +29,7 @@ const correctionSchema = z.object({
  * a batch, and bulk CSV import with a mandatory preview-and-confirm diff.
  */
 export default async function inventoryRoutes(app: FastifyInstance) {
-  app.get("/inventory/stock", { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] }, async (req, reply) => {
+  app.get("/inventory/stock", { preHandler: [app.authenticate, app.requireRole("owner", "store_manager", "picker_packer")] }, async (req, reply) => {
     const q = req.query as Record<string, string>;
     reply.send(
       await listStock({
@@ -48,7 +48,7 @@ export default async function inventoryRoutes(app: FastifyInstance) {
 
   app.post(
     "/inventory/stock/adjust",
-    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager", "picker_packer")] },
     async (req, reply) => {
       const body = z
         .object({ productId: z.string().uuid(), batchId: z.string().uuid(), binId: z.string().uuid(), newQuantityBaseUnits: z.number().int().min(0) })
@@ -77,7 +77,7 @@ export default async function inventoryRoutes(app: FastifyInstance) {
 
   app.post(
     "/inventory/batches/:id/correct",
-    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager", "picker_packer")] },
     async (req, reply) => {
       const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
       const body = z.object({ field: z.enum(["batch_no", "expiry_date", "mrp"]), newValue: z.string().min(1) }).merge(correctionSchema).safeParse(req.body);
@@ -102,7 +102,7 @@ export default async function inventoryRoutes(app: FastifyInstance) {
 
   app.post(
     "/inventory/batches/:id/block",
-    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager", "picker_packer")] },
     async (req, reply) => {
       const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
       const body = z.object({ reasonCode: z.enum(INVENTORY_CORRECTION_REASON_CODES), note: z.string().min(1) }).safeParse(req.body);
@@ -119,7 +119,7 @@ export default async function inventoryRoutes(app: FastifyInstance) {
 
   app.post(
     "/inventory/batches/:id/unblock",
-    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager", "picker_packer")] },
     async (req, reply) => {
       const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
       if (!params.success) return reply.code(400).send({ error: "invalid_id" });

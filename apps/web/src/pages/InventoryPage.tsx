@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api.js";
 import SearchBar from "../components/SearchBar.js";
+import { useAuth } from "../auth/AuthContext.js";
 
 const CORRECTION_REASONS = [
   { value: "physical_recount", label: "Physical recount" },
@@ -33,18 +34,27 @@ type Tab = "stock" | "move" | "bulk";
  * preview-and-confirm diff.
  */
 export default function InventoryPage() {
+  const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("stock");
+  // Picker/packer gets the stock-edit capability itself (quantity +/-,
+  // batch/expiry/MRP correction, block/unblock — owner-requested) but not
+  // Move stock or Bulk import, which stay Owner/store_manager-only both
+  // here and on their own routes — a narrower grant than "the whole
+  // Inventory screen," matching exactly what was asked for.
+  const canMoveOrBulk = user?.role === "owner" || user?.role === "store_manager";
   return (
     <div>
       <h2 style={{ marginTop: 0 }}>Inventory</h2>
       <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
-        {([["stock", "Stock view"], ["move", "Move stock"], ["bulk", "Bulk import"]] as Array<[Tab, string]>).map(([key, label]) => (
-          <button key={key} className={tab === key ? "btn-primary" : "btn-secondary"} onClick={() => setTab(key)}>{label}</button>
-        ))}
+        {([["stock", "Stock view"], ["move", "Move stock"], ["bulk", "Bulk import"]] as Array<[Tab, string]>)
+          .filter(([key]) => key === "stock" || canMoveOrBulk)
+          .map(([key, label]) => (
+            <button key={key} className={tab === key ? "btn-primary" : "btn-secondary"} onClick={() => setTab(key)}>{label}</button>
+          ))}
       </div>
       {tab === "stock" && <StockTab />}
-      {tab === "move" && <MoveStockTab />}
-      {tab === "bulk" && <BulkImportTab />}
+      {tab === "move" && canMoveOrBulk && <MoveStockTab />}
+      {tab === "bulk" && canMoveOrBulk && <BulkImportTab />}
     </div>
   );
 }

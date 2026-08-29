@@ -83,7 +83,7 @@ export default function App() {
           )}
           <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}>Products</button>
           <button className={tab === "bins" ? "active" : ""} onClick={() => setTab("bins")}>Bins</button>
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {(user.role === "owner" || user.role === "store_manager" || user.role === "picker_packer") && (
             <button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}>Inventory</button>
           )}
           {(user.role === "owner" || user.role === "store_manager") && (
