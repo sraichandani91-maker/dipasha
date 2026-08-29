@@ -19,6 +19,7 @@ interface ShortbookItem {
   suggestedVendorId: string | null;
   suggestedVendorName: string | null;
   lastRate: number | null;
+  marginPercent: number | null;
 }
 interface ClearanceCandidate {
   productId: string;
@@ -186,7 +187,7 @@ export default function OrderBookPage() {
         <div className="card" style={{ flex: 2 }}>
           <h3 style={{ marginTop: 0 }}>Shortbook items</h3>
           <table className="data-table">
-            <thead><tr><th>Item</th><th>Stock</th><th>Days of cover</th><th>Distributor / last rate</th><th>Qty to order</th><th></th></tr></thead>
+            <thead><tr><th>Item</th><th>Stock</th><th>Days of cover</th><th>Priority distributor (best margin)</th><th>Qty to order</th><th></th></tr></thead>
             <tbody>
               {items.map((item) => (
                 <ShortbookRow
@@ -241,7 +242,11 @@ function ShortbookRow({ item, inCart, busy, onAdd }: { item: ShortbookItem; inCa
       <td>{item.productName}</td>
       <td>{item.currentStock}</td>
       <td>{item.daysOfCover === null ? "—" : item.daysOfCover.toFixed(1)}</td>
-      <td className="hint-text">{item.suggestedVendorName ?? "—"}{item.lastRate !== null && ` · ₹${item.lastRate}`}</td>
+      <td className="hint-text">
+        {item.suggestedVendorName ?? "—"}
+        {item.lastRate !== null && ` · ₹${item.lastRate.toFixed(2)}`}
+        {item.marginPercent !== null && <span className="badge badge-info" style={{ marginLeft: 6 }}>{item.marginPercent.toFixed(1)}% margin</span>}
+      </td>
       <td><input type="number" style={{ width: 80 }} value={qty} onChange={(e) => setQty(Number(e.target.value))} /></td>
       <td>
         <button className="btn-secondary" disabled={busy || inCart} onClick={() => onAdd(qty, item.suggestedVendorId)}>

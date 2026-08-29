@@ -11,29 +11,53 @@ interface VendorHint {
   vendorId: string;
   vendorName: string;
   rate: number;
+  marginPercent: number;
   moq: number | null;
 }
 
-// Last vendor a product was actually bought from, batched for every
-// product on the current shortage list at once — same "distributor sells
-// by the box" MOQ rounding rule as the old PO-suggestions vendor lookup
-// (repo/purchase-orders.ts), just shared across the dashboard tile,
-// the item list, and cart defaults instead of duplicated three times.
-async function lastVendorsForProducts(productIds: string[]): Promise<Map<string, VendorHint>> {
+// Owner buys the same medicine from more than one wholesaler and wants
+// the reorder suggestion to point at whichever one currently gives the
+// best margin, not just whoever was ordered from most recently. Priced
+// off each vendor's most recent `batches.effective_cost_per_base_unit`
+// for that product — the same landed-cost figure (discounts, schemes,
+// apportioned charges all folded in, not just the quoted rate) every
+// other margin computation in this build already reads
+// (`domain/landed-cost.ts`, `repo/margin-reports.ts`) — against that same
+// batch's MRP, so the ranking reflects real margin, not list price.
+// "Distributor sells by the box" MOQ rounding is unchanged from before.
+async function priorityMarginVendorsForProducts(productIds: string[]): Promise<Map<string, VendorHint>> {
   if (productIds.length === 0) return new Map();
   const { rows } = await requirePool().query(
-    `SELECT DISTINCT ON (pil.product_id) pil.product_id, v.id AS vendor_id, v.name AS vendor_name,
-       v.default_min_order_pack_units, pil.rate_before_discount
+    `SELECT DISTINCT ON (pil.product_id, pi.vendor_id)
+       pil.product_id, v.id AS vendor_id, v.name AS vendor_name, v.default_min_order_pack_units,
+       b.effective_cost_per_base_unit, b.mrp, pi.invoice_date
      FROM purchase_invoice_lines pil
      JOIN purchase_invoices pi ON pi.id = pil.purchase_invoice_id
      JOIN vendors v ON v.id = pi.vendor_id
-     WHERE pil.product_id = ANY($1)
-     ORDER BY pil.product_id, pi.invoice_date DESC`,
+     JOIN batches b ON b.id = pil.batch_id
+     WHERE pil.product_id = ANY($1) AND b.effective_cost_per_base_unit IS NOT NULL AND b.mrp > 0
+     ORDER BY pil.product_id, pi.vendor_id, pi.invoice_date DESC`,
     [productIds]
   );
-  const map = new Map<string, VendorHint>();
+
+  const byProduct = new Map<string, VendorHint[]>();
   for (const r of rows) {
-    map.set(r.product_id, { vendorId: r.vendor_id, vendorName: r.vendor_name, rate: Number(r.rate_before_discount), moq: r.default_min_order_pack_units });
+    const cost = Number(r.effective_cost_per_base_unit);
+    const mrp = Number(r.mrp);
+    const hint: VendorHint = {
+      vendorId: r.vendor_id, vendorName: r.vendor_name,
+      rate: cost, marginPercent: ((mrp - cost) / mrp) * 100,
+      moq: r.default_min_order_pack_units,
+    };
+    const list = byProduct.get(r.product_id) ?? [];
+    list.push(hint);
+    byProduct.set(r.product_id, list);
+  }
+
+  const map = new Map<string, VendorHint>();
+  for (const [productId, hints] of byProduct) {
+    const best = hints.reduce((a, b) => (b.marginPercent > a.marginPercent ? b : a));
+    map.set(productId, best);
   }
   return map;
 }
@@ -42,15 +66,22 @@ export interface ShortbookItemWithVendor extends ShortbookItem {
   suggestedVendorId: string | null;
   suggestedVendorName: string | null;
   lastRate: number | null;
+  marginPercent: number | null;
 }
 
 export async function getShortbookItems(): Promise<{ items: ShortbookItemWithVendor[]; clearanceCandidates: ClearanceCandidate[] }> {
   const { items, clearanceCandidates } = await shortbookItems();
-  const vendorMap = await lastVendorsForProducts(items.map((i) => i.productId));
+  const vendorMap = await priorityMarginVendorsForProducts(items.map((i) => i.productId));
   return {
     items: items.map((i) => {
       const v = vendorMap.get(i.productId);
-      return { ...i, suggestedVendorId: v?.vendorId ?? null, suggestedVendorName: v?.vendorName ?? null, lastRate: v?.rate ?? null };
+      return {
+        ...i,
+        suggestedVendorId: v?.vendorId ?? null,
+        suggestedVendorName: v?.vendorName ?? null,
+        lastRate: v?.rate ?? null,
+        marginPercent: v?.marginPercent ?? null,
+      };
     }),
     clearanceCandidates,
   };
@@ -74,7 +105,7 @@ export interface ShortbookDashboard {
 export async function getShortbookDashboard(): Promise<ShortbookDashboard> {
   const db = requirePool();
   const { items } = await shortbookItems();
-  const vendorMap = await lastVendorsForProducts(items.map((i) => i.productId));
+  const vendorMap = await priorityMarginVendorsForProducts(items.map((i) => i.productId));
   const distributorIds = new Set([...vendorMap.values()].map((v) => v.vendorId));
 
   const [cartCount, orderedCount, shortCount] = await Promise.all([
