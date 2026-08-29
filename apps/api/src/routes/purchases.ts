@@ -35,6 +35,7 @@ const createInvoiceSchema = z.object({
   vendorId: z.string().uuid(),
   invoiceNumber: z.string().min(1),
   invoiceDate: z.string(),
+  invoiceTime: z.string().nullable().optional(),
   invoiceValueStated: z.number().positive(),
   paymentTermsDays: z.number().int().min(0).default(0),
   billLevelDiscount: z.number().min(0).default(0),
@@ -72,6 +73,7 @@ export default async function purchaseRoutes(app: FastifyInstance) {
             promisedFreeQuantityBaseUnits: l.promisedFreeQuantityBaseUnits ?? null,
           })),
           purchaseOrderId: body.purchaseOrderId ?? null,
+          invoiceTime: body.invoiceTime ?? null,
           createdBy: req.auth!.sub,
           source: "web", // apps/web is the only client for M3; the app gets its own client-type stamping once it's built
           entryMethod: "manual",

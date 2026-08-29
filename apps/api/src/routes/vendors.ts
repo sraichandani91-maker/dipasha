@@ -8,6 +8,7 @@ import {
   getVendorStatement,
   listVendors,
   recordVendorPayment,
+  updateVendorBankDetails,
   updateVendorContact,
   updateVendorMoq,
   VendorLedgerError,
@@ -62,6 +63,20 @@ export default async function vendorRoutes(app: FastifyInstance) {
       const body = z.object({ phone: z.string().nullable(), email: z.string().email().nullable() }).safeParse(req.body);
       if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
       await updateVendorContact(params.data.id, body.data);
+      reply.send({ updated: true });
+    }
+  );
+
+  // Owner-requested — nowhere to record a vendor's bank account for
+  // actually paying them, found by checking a real vendor GST invoice.
+  app.patch(
+    "/vendors/:id/bank-details",
+    { preHandler: [app.authenticate, app.requireRole("owner", "store_manager")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+      const body = z.object({ bankName: z.string().nullable(), bankAccountNumber: z.string().nullable(), bankIfsc: z.string().nullable() }).safeParse(req.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
+      await updateVendorBankDetails(params.data.id, body.data);
       reply.send({ updated: true });
     }
   );

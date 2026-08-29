@@ -7,10 +7,14 @@ interface Vendor {
   gstin: string | null;
   phone: string | null;
   email: string | null;
+  bankName: string | null;
+  bankAccountNumber: string | null;
+  bankIfsc: string | null;
 }
 
 const EXPENSE_CATEGORIES = ["rent", "salaries", "electricity", "transport", "packaging", "delivery_fuel", "software", "other"] as const;
 const PAYMENT_METHODS = ["cash", "upi", "card", "cheque", "bank_transfer"] as const;
+const DEBIT_NOTE_REASON_CODES = ["damaged", "expired", "wrong_item", "short_supply", "other"] as const;
 
 function defaultRange() {
   const now = new Date();
@@ -90,6 +94,11 @@ function VendorDetail({ vendor, onUpdated }: { vendor: Vendor; onUpdated: (v: Ve
   const [email, setEmail] = useState(vendor.email ?? "");
   const [savingContact, setSavingContact] = useState(false);
 
+  const [bankName, setBankName] = useState(vendor.bankName ?? "");
+  const [bankAccountNumber, setBankAccountNumber] = useState(vendor.bankAccountNumber ?? "");
+  const [bankIfsc, setBankIfsc] = useState(vendor.bankIfsc ?? "");
+  const [savingBankDetails, setSavingBankDetails] = useState(false);
+
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<(typeof PAYMENT_METHODS)[number]>("cash");
   const [recordingPayment, setRecordingPayment] = useState(false);
@@ -114,6 +123,19 @@ function VendorDetail({ vendor, onUpdated }: { vendor: Vendor; onUpdated: (v: Ve
       onUpdated({ ...vendor, phone: phone || null, email: email || null });
     } finally {
       setSavingContact(false);
+    }
+  }
+
+  // Owner-requested: nowhere to record a vendor's bank account for
+  // actually paying them — found by checking a real vendor GST invoice.
+  async function saveBankDetails() {
+    setSavingBankDetails(true);
+    try {
+      const body = { bankName: bankName || null, bankAccountNumber: bankAccountNumber || null, bankIfsc: bankIfsc || null };
+      await api.patch(`/vendors/${vendor.id}/bank-details`, body);
+      onUpdated({ ...vendor, ...body });
+    } finally {
+      setSavingBankDetails(false);
     }
   }
 
@@ -150,6 +172,14 @@ function VendorDetail({ vendor, onUpdated }: { vendor: Vendor; onUpdated: (v: Ve
         </div>
 
         <div style={{ flex: 1, minWidth: 260 }}>
+          <strong>Bank account (for paying this vendor)</strong>
+          <div className="field"><label>Bank name</label><input value={bankName} onChange={(e) => setBankName(e.target.value)} /></div>
+          <div className="field"><label>Account number</label><input value={bankAccountNumber} onChange={(e) => setBankAccountNumber(e.target.value)} /></div>
+          <div className="field"><label>IFSC</label><input value={bankIfsc} onChange={(e) => setBankIfsc(e.target.value.toUpperCase())} maxLength={11} /></div>
+          <button className="btn-primary" disabled={savingBankDetails} onClick={saveBankDetails} style={{ marginTop: 6 }}>{savingBankDetails ? "Saving…" : "Save bank details"}</button>
+        </div>
+
+        <div style={{ flex: 1, minWidth: 260 }}>
           <strong>Balance</strong>
           <div style={{ marginTop: 6 }}>
             <button className="btn-secondary" disabled={loadingBalance} onClick={loadBalance}>{loadingBalance ? "Loading…" : "Check balance"}</button>
@@ -171,6 +201,9 @@ function VendorDetail({ vendor, onUpdated }: { vendor: Vendor; onUpdated: (v: Ve
           {paymentResult && <p className="hint-text" style={{ marginTop: 6 }}>{paymentResult}</p>}
         </div>
       </div>
+
+      <hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "16px 0" }} />
+      <DebitNotesSection vendorId={vendor.id} onRecorded={loadBalance} />
 
       <hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "16px 0" }} />
       <strong>Statement</strong>
@@ -200,6 +233,16 @@ function VendorDetail({ vendor, onUpdated }: { vendor: Vendor; onUpdated: (v: Ve
                 <tr key={p.id}><td>{new Date(p.created_at).toLocaleDateString("en-IN")}</td><td>₹{Number(p.amount).toFixed(2)}</td><td>{p.payment_method}</td></tr>
               ))}
               {statement.payments.length === 0 && <tr><td colSpan={3} className="hint-text">No payments in this range.</td></tr>}
+            </tbody>
+          </table>
+          <h4 style={{ marginTop: 12 }}>Debit notes (goods returned to vendor)</h4>
+          <table className="data-table">
+            <thead><tr><th>Date</th><th>Debit note #</th><th>Reason</th><th>Value</th></tr></thead>
+            <tbody>
+              {(statement.debitNotes ?? []).map((d: any) => (
+                <tr key={d.id}><td>{new Date(d.created_at).toLocaleDateString("en-IN")}</td><td>{d.debit_note_number}</td><td style={{ textTransform: "capitalize" }}>{d.reason_code.replace("_", " ")}</td><td>₹{Number(d.total_value).toFixed(2)}</td></tr>
+              ))}
+              {(!statement.debitNotes || statement.debitNotes.length === 0) && <tr><td colSpan={4} className="hint-text">No debit notes in this range.</td></tr>}
             </tbody>
           </table>
           <p style={{ fontWeight: 700, marginTop: 8 }}>Current balance: ₹{Number(statement.currentBalance).toFixed(2)}</p>
@@ -237,6 +280,169 @@ function AgeingSummary() {
           </tbody>
         </table>
       )}
+    </div>
+  );
+}
+
+// Return-to-vendor (Section 6.4's "CR/DR NOTE" bill line). Always tied to
+// the real purchase invoice line and the real bin the stock leaves —
+// matches write-offs.ts's discipline of never letting a physical stock
+// movement happen without a human naming the exact bin.
+function DebitNotesSection({ vendorId, onRecorded }: { vendorId: string; onRecorded: () => void }) {
+  const [notes, setNotes] = useState<any[] | null>(null);
+  const [showNew, setShowNew] = useState(false);
+
+  async function load() {
+    setNotes(await api.get(`/vendor-debit-notes?vendorId=${vendorId}`));
+  }
+  useEffect(() => { load(); setShowNew(false); }, [vendorId]);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <strong>Debit notes (return goods to vendor)</strong>
+        <button className="btn-secondary" onClick={() => setShowNew((s) => !s)}>{showNew ? "Cancel" : "+ New debit note"}</button>
+      </div>
+      {notes && notes.length > 0 && (
+        <table className="data-table" style={{ marginTop: 8 }}>
+          <thead><tr><th>Date</th><th>Debit note #</th><th>Invoice #</th><th>Reason</th><th>Value</th></tr></thead>
+          <tbody>
+            {notes.map((n: any) => (
+              <tr key={n.id}>
+                <td>{new Date(n.created_at).toLocaleDateString("en-IN")}</td>
+                <td>{n.debit_note_number}</td>
+                <td>{n.invoice_number}</td>
+                <td style={{ textTransform: "capitalize" }}>{n.reason_code.replace("_", " ")}</td>
+                <td>₹{Number(n.total_value).toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {notes && notes.length === 0 && !showNew && <p className="hint-text" style={{ marginTop: 6 }}>No debit notes recorded for this vendor.</p>}
+      {showNew && (
+        <NewDebitNoteForm
+          vendorId={vendorId}
+          onCreated={() => { setShowNew(false); load(); onRecorded(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function NewDebitNoteForm({ vendorId, onCreated }: { vendorId: string; onCreated: () => void }) {
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [invoiceId, setInvoiceId] = useState("");
+  const [invoiceDetail, setInvoiceDetail] = useState<any>(null);
+  const [lineState, setLineState] = useState<Record<string, { include: boolean; quantity: number | ""; binId: string; binOptions: any[] }>>({});
+  const [reasonCode, setReasonCode] = useState<(typeof DEBIT_NOTE_REASON_CODES)[number]>("damaged");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => { api.get(`/purchase-invoices?vendorId=${vendorId}`).then(setInvoices); }, [vendorId]);
+
+  async function selectInvoice(id: string) {
+    setInvoiceId(id);
+    setInvoiceDetail(null);
+    setLineState({});
+    setError(null);
+    if (!id) return;
+    const detail = await api.get(`/purchase-invoices/${id}`);
+    setInvoiceDetail(detail);
+    const init: typeof lineState = {};
+    for (const l of detail.lines) init[l.id] = { include: false, quantity: "", binId: "", binOptions: [] };
+    setLineState(init);
+  }
+
+  async function toggleLine(line: any) {
+    const current = lineState[line.id];
+    if (!current?.include) {
+      const locations = await api.get(`/products/${line.product_id}/stock-locations`);
+      const binOptions = locations.filter((loc: any) => loc.batch_id === line.batch_id && loc.quantity_base_units > 0);
+      setLineState((s) => ({ ...s, [line.id]: { ...s[line.id], include: true, binOptions, binId: binOptions[0]?.bin_id ?? "" } }));
+    } else {
+      setLineState((s) => ({ ...s, [line.id]: { ...s[line.id], include: false } }));
+    }
+  }
+
+  async function submit() {
+    const lines = Object.entries(lineState)
+      .filter(([, v]) => v.include && v.quantity !== "" && Number(v.quantity) > 0 && v.binId)
+      .map(([purchaseInvoiceLineId, v]) => ({ purchaseInvoiceLineId, quantityBaseUnits: Number(v.quantity), binId: v.binId }));
+    if (lines.length === 0 || !note.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post("/vendor-debit-notes", { purchaseInvoiceId: invoiceId, reasonCode, note, lines, deviceId: "web-console" });
+      onCreated();
+    } catch (err) {
+      if (err instanceof ApiError && err.body?.error === "insufficient_stock") setError("Not enough physical stock of that batch in the selected bin.");
+      else if (err instanceof ApiError && err.body?.error === "return_quantity_exceeds_purchased") setError("Return quantity exceeds what's left to return on that line.");
+      else setError("Could not record the debit note.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 8, background: "var(--brand-green-tint)" }}>
+      <div className="field">
+        <label>Purchase invoice</label>
+        <select value={invoiceId} onChange={(e) => selectInvoice(e.target.value)} style={{ width: "100%" }}>
+          <option value="">Select invoice…</option>
+          {invoices.map((i: any) => <option key={i.id} value={i.id}>{i.invoice_number} — {new Date(i.invoice_date).toLocaleDateString("en-IN")}</option>)}
+        </select>
+      </div>
+
+      {invoiceDetail && (
+        <div style={{ marginTop: 8 }}>
+          {invoiceDetail.lines.map((l: any) => {
+            const s = lineState[l.id];
+            if (!s) return null;
+            return (
+              <div key={l.id} className="card" style={{ marginBottom: 6 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={s.include} onChange={() => toggleLine(l)} />
+                  <strong>{l.product_name}</strong>
+                  <span className="hint-text">batch {l.batch_no} · purchased {l.quantity_base_units + l.free_quantity_base_units}</span>
+                </label>
+                {s.include && (
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6, marginLeft: 24 }}>
+                    <div className="field">
+                      <label>Return quantity</label>
+                      <input type="number" style={{ width: 90 }} value={s.quantity}
+                        onChange={(e) => setLineState((st) => ({ ...st, [l.id]: { ...st[l.id], quantity: e.target.value === "" ? "" : Number(e.target.value) } }))} />
+                    </div>
+                    <div className="field">
+                      <label>From bin</label>
+                      <select value={s.binId} onChange={(e) => setLineState((st) => ({ ...st, [l.id]: { ...st[l.id], binId: e.target.value } }))}>
+                        <option value="">Select bin…</option>
+                        {s.binOptions.map((b: any) => <option key={b.bin_id} value={b.bin_id}>{b.bin_code} ({b.quantity_base_units} on hand)</option>)}
+                      </select>
+                    </div>
+                    {s.binOptions.length === 0 && <p className="hint-text" style={{ alignSelf: "center" }}>No physical stock of this batch found in any bin.</p>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+        <div className="field">
+          <label>Reason</label>
+          <select value={reasonCode} onChange={(e) => setReasonCode(e.target.value as any)}>
+            {DEBIT_NOTE_REASON_CODES.map((r) => <option key={r} value={r}>{r.replace("_", " ")}</option>)}
+          </select>
+        </div>
+        <div className="field" style={{ flex: 1, minWidth: 220 }}><label>Note (required)</label><input value={note} onChange={(e) => setNote(e.target.value)} style={{ width: "100%" }} /></div>
+      </div>
+      {error && <p className="error-text">{error}</p>}
+      <button className="btn-primary" disabled={busy || !invoiceId || !note.trim()} onClick={submit} style={{ marginTop: 8 }}>
+        {busy ? "Saving…" : "Save debit note"}
+      </button>
     </div>
   );
 }

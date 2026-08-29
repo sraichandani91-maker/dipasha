@@ -20,6 +20,12 @@ interface Line {
   discountPercent: number;
   gstRate: number;
   cess: number;
+  // Section 9A.2 scheme tracking — what the vendor actually promised
+  // (a scheme agreement, a PO confirmation), left blank on most lines.
+  // Only meaningful when it differs from the actual quantity/free
+  // quantity above; the Margins > Scheme shortfalls report reads this.
+  promisedQuantityBaseUnits: number | "";
+  promisedFreeQuantityBaseUnits: number | "";
 }
 
 function expiryToIsoDate(mmYY: string): string | null {
@@ -247,6 +253,7 @@ function NewInvoiceForm() {
 
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [invoiceTime, setInvoiceTime] = useState("");
   const [invoiceValueStated, setInvoiceValueStated] = useState<number | "">("");
   const [billLevelDiscount, setBillLevelDiscount] = useState(0);
   const [freightAndCharges, setFreightAndCharges] = useState(0);
@@ -269,6 +276,7 @@ function NewInvoiceForm() {
         productId: p.id, productName: `${p.name} (${p.manufacturer})`, packSize: p.packSize, baseUnit: p.baseUnit,
         batchNo: "", expiryMonthYear: "", quantityBaseUnits: 0, freeQuantityBaseUnits: 0,
         mrp: p.mrp ?? 0, ratePerPack: 0, discountPercent: 0, gstRate: p.scheduleCategory ? 12 : 12, cess: 0,
+        promisedQuantityBaseUnits: "", promisedFreeQuantityBaseUnits: "",
       },
     ]);
     setShowAddLine(false);
@@ -298,6 +306,7 @@ function NewInvoiceForm() {
     try {
       const payload = {
         vendorId, invoiceNumber, invoiceDate,
+        invoiceTime: invoiceTime.trim() || null,
         invoiceValueStated: Number(invoiceValueStated),
         billLevelDiscount, freightAndCharges, roundOff,
         overrideNearExpiry, acknowledgeReconciliationMismatch,
@@ -313,12 +322,15 @@ function NewInvoiceForm() {
           discountPercent: l.discountPercent,
           gstRate: l.gstRate,
           cess: l.cess,
+          promisedQuantityBaseUnits: l.promisedQuantityBaseUnits === "" ? null : l.promisedQuantityBaseUnits,
+          promisedFreeQuantityBaseUnits: l.promisedFreeQuantityBaseUnits === "" ? null : l.promisedFreeQuantityBaseUnits,
         })),
       };
       const res = await api.post("/purchase-invoices", payload);
       setResult(res);
       setLines([]);
       setInvoiceNumber("");
+      setInvoiceTime("");
       setInvoiceValueStated("");
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -358,6 +370,7 @@ function NewInvoiceForm() {
           </div>
           <div className="field"><label>Invoice number</label><input style={{ width: "100%" }} value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} /></div>
           <div className="field"><label>Invoice date</label><input type="date" style={{ width: "100%" }} value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} /></div>
+          <div className="field"><label>Invoice time (optional)</label><input placeholder="e.g. 12:35 pm" style={{ width: "100%" }} value={invoiceTime} onChange={(e) => setInvoiceTime(e.target.value)} /></div>
           <div className="field"><label>Invoice value (stated)</label><input type="number" style={{ width: "100%" }} value={invoiceValueStated} onChange={(e) => setInvoiceValueStated(e.target.value === "" ? "" : Number(e.target.value))} /></div>
           <div className="field"><label>Bill-level discount ₹</label><input type="number" style={{ width: "100%" }} value={billLevelDiscount} onChange={(e) => setBillLevelDiscount(Number(e.target.value))} /></div>
           <div className="field"><label>Freight / charges ₹</label><input type="number" style={{ width: "100%" }} value={freightAndCharges} onChange={(e) => setFreightAndCharges(Number(e.target.value))} /></div>
@@ -397,7 +410,23 @@ function NewInvoiceForm() {
               <div className="field"><label>Rate (per pack)</label><input type="number" style={{ width: 80 }} value={l.ratePerPack} onChange={(e) => updateLine(l.key, { ratePerPack: Number(e.target.value) })} /></div>
               <div className="field"><label>Discount %</label><input type="number" style={{ width: 70 }} value={l.discountPercent} onChange={(e) => updateLine(l.key, { discountPercent: Number(e.target.value) })} /></div>
               <div className="field"><label>GST %</label><input type="number" style={{ width: 60 }} value={l.gstRate} onChange={(e) => updateLine(l.key, { gstRate: Number(e.target.value) })} /></div>
+              <div className="field"><label>Cess ₹</label><input type="number" style={{ width: 70 }} value={l.cess} onChange={(e) => updateLine(l.key, { cess: Number(e.target.value) })} /></div>
             </div>
+            <details style={{ marginTop: 8 }}>
+              <summary className="hint-text" style={{ cursor: "pointer" }}>Scheme promised qty (only if the vendor promised more than what actually arrived)</summary>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+                <div className="field">
+                  <label>Promised quantity</label>
+                  <input type="number" style={{ width: 90 }} value={l.promisedQuantityBaseUnits}
+                    onChange={(e) => updateLine(l.key, { promisedQuantityBaseUnits: e.target.value === "" ? "" : Number(e.target.value) })} />
+                </div>
+                <div className="field">
+                  <label>Promised free quantity</label>
+                  <input type="number" style={{ width: 90 }} value={l.promisedFreeQuantityBaseUnits}
+                    onChange={(e) => updateLine(l.key, { promisedFreeQuantityBaseUnits: e.target.value === "" ? "" : Number(e.target.value) })} />
+                </div>
+              </div>
+            </details>
             <p className="hint-text" style={{ marginTop: 6, marginBottom: 0 }}>
               ₹{l.ratePerBaseUnit.toFixed(2)}/{l.baseUnit} · taxable ₹{l.taxableValue.toFixed(2)} · est. tax ₹{l.estTax.toFixed(2)} · line total ≈ ₹{l.lineTotal.toFixed(2)}
             </p>

@@ -15,6 +15,9 @@ export interface Vendor {
   defaultMinOrderPackUnits: number | null;
   phone: string | null;
   email: string | null;
+  bankName: string | null;
+  bankAccountNumber: string | null;
+  bankIfsc: string | null;
 }
 
 function mapRow(r: any): Vendor {
@@ -28,6 +31,9 @@ function mapRow(r: any): Vendor {
     defaultMinOrderPackUnits: r.default_min_order_pack_units,
     phone: r.phone,
     email: r.email,
+    bankName: r.bank_name,
+    bankAccountNumber: r.bank_account_number,
+    bankIfsc: r.bank_ifsc,
   };
 }
 
@@ -66,6 +72,16 @@ export async function updateVendorMoq(id: string, defaultMinOrderPackUnits: numb
   await requirePool().query(`UPDATE vendors SET default_min_order_pack_units = $1 WHERE id = $2`, [defaultMinOrderPackUnits, id]);
 }
 
+// Owner-requested: nowhere to record a vendor's bank account for
+// actually paying them, found by checking a real vendor GST invoice
+// against the vendor master's fields.
+export async function updateVendorBankDetails(id: string, input: { bankName: string | null; bankAccountNumber: string | null; bankIfsc: string | null }) {
+  await requirePool().query(
+    `UPDATE vendors SET bank_name = $1, bank_account_number = $2, bank_ifsc = $3 WHERE id = $4`,
+    [input.bankName, input.bankAccountNumber, input.bankIfsc, id]
+  );
+}
+
 // Section 10B.2's PO send needs somewhere to actually send to.
 export async function updateVendorContact(id: string, input: { phone: string | null; email: string | null }) {
   await requirePool().query(`UPDATE vendors SET phone = $1, email = $2 WHERE id = $3`, [input.phone, input.email, id]);
@@ -95,10 +111,15 @@ export async function getVendorBalance(vendorId: string) {
     `
     WITH allocations AS (
       SELECT purchase_invoice_id, SUM(amount_allocated) AS allocated FROM vendor_payment_allocations GROUP BY purchase_invoice_id
+    ),
+    debits AS (
+      SELECT purchase_invoice_id, SUM(total_value) AS debited FROM vendor_debit_notes GROUP BY purchase_invoice_id
     )
-    SELECT COALESCE(SUM(pi.net_payable_computed - COALESCE(a.allocated, 0)), 0)::numeric(14,2) AS balance
-    FROM purchase_invoices pi LEFT JOIN allocations a ON a.purchase_invoice_id = pi.id
-    WHERE pi.vendor_id = $1 AND (pi.net_payable_computed - COALESCE(a.allocated, 0)) > 0.005
+    SELECT COALESCE(SUM(pi.net_payable_computed - COALESCE(a.allocated, 0) - COALESCE(d.debited, 0)), 0)::numeric(14,2) AS balance
+    FROM purchase_invoices pi
+    LEFT JOIN allocations a ON a.purchase_invoice_id = pi.id
+    LEFT JOIN debits d ON d.purchase_invoice_id = pi.id
+    WHERE pi.vendor_id = $1 AND (pi.net_payable_computed - COALESCE(a.allocated, 0) - COALESCE(d.debited, 0)) > 0.005
     `,
     [vendorId]
   );
@@ -114,11 +135,16 @@ export async function getVendorAgeingReport() {
     WITH allocations AS (
       SELECT purchase_invoice_id, SUM(amount_allocated) AS allocated FROM vendor_payment_allocations GROUP BY purchase_invoice_id
     ),
+    debits AS (
+      SELECT purchase_invoice_id, SUM(total_value) AS debited FROM vendor_debit_notes GROUP BY purchase_invoice_id
+    ),
     outstanding AS (
       SELECT pi.vendor_id, pi.invoice_date,
-        (pi.net_payable_computed - COALESCE(a.allocated, 0))::numeric(14,2) AS outstanding
-      FROM purchase_invoices pi LEFT JOIN allocations a ON a.purchase_invoice_id = pi.id
-      WHERE (pi.net_payable_computed - COALESCE(a.allocated, 0)) > 0.005
+        (pi.net_payable_computed - COALESCE(a.allocated, 0) - COALESCE(d.debited, 0))::numeric(14,2) AS outstanding
+      FROM purchase_invoices pi
+      LEFT JOIN allocations a ON a.purchase_invoice_id = pi.id
+      LEFT JOIN debits d ON d.purchase_invoice_id = pi.id
+      WHERE (pi.net_payable_computed - COALESCE(a.allocated, 0) - COALESCE(d.debited, 0)) > 0.005
     )
     SELECT v.id AS vendor_id, v.name,
       COALESCE(SUM(o.outstanding) FILTER (WHERE CURRENT_DATE - o.invoice_date <= 30), 0)::numeric(14,2) AS current_bucket,
@@ -163,10 +189,13 @@ export async function recordVendorPayment(input: RecordVendorPaymentInput) {
     // reasoning as the customer side.
     const { rows: outstandingInvoices } = await client.query(
       `
-      WITH allocations AS (SELECT purchase_invoice_id, SUM(amount_allocated) AS allocated FROM vendor_payment_allocations GROUP BY purchase_invoice_id)
-      SELECT pi.id, pi.invoice_date, (pi.net_payable_computed - COALESCE(a.allocated, 0))::numeric(14,2) AS outstanding
-      FROM purchase_invoices pi LEFT JOIN allocations a ON a.purchase_invoice_id = pi.id
-      WHERE pi.vendor_id = $1 AND (pi.net_payable_computed - COALESCE(a.allocated, 0)) > 0.005
+      WITH allocations AS (SELECT purchase_invoice_id, SUM(amount_allocated) AS allocated FROM vendor_payment_allocations GROUP BY purchase_invoice_id),
+      debits AS (SELECT purchase_invoice_id, SUM(total_value) AS debited FROM vendor_debit_notes GROUP BY purchase_invoice_id)
+      SELECT pi.id, pi.invoice_date, (pi.net_payable_computed - COALESCE(a.allocated, 0) - COALESCE(d.debited, 0))::numeric(14,2) AS outstanding
+      FROM purchase_invoices pi
+      LEFT JOIN allocations a ON a.purchase_invoice_id = pi.id
+      LEFT JOIN debits d ON d.purchase_invoice_id = pi.id
+      WHERE pi.vendor_id = $1 AND (pi.net_payable_computed - COALESCE(a.allocated, 0) - COALESCE(d.debited, 0)) > 0.005
       ORDER BY (pi.id = $2) DESC NULLS LAST, pi.invoice_date ASC
       `,
       [input.vendorId, input.allocateToInvoiceId]
@@ -208,9 +237,14 @@ export async function getVendorStatement(vendorId: string, fromDate: string, toD
      WHERE vendor_id = $1 AND created_at::date BETWEEN $2 AND $3 ORDER BY created_at`,
     [vendorId, fromDate, toDate]
   );
+  const { rows: debitNotes } = await db.query(
+    `SELECT id, debit_note_number, purchase_invoice_id, reason_code, total_value, created_at FROM vendor_debit_notes
+     WHERE vendor_id = $1 AND created_at::date BETWEEN $2 AND $3 ORDER BY created_at`,
+    [vendorId, fromDate, toDate]
+  );
   const balance = await getVendorBalance(vendorId);
 
-  return { vendor: vendorRows[0], invoices, payments, currentBalance: balance.balance };
+  return { vendor: vendorRows[0], invoices, payments, debitNotes, currentBalance: balance.balance };
 }
 
 function round2(n: number): number {

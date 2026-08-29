@@ -12,6 +12,7 @@ import saltRoutes from "./routes/salts.js";
 import binRoutes from "./routes/bins.js";
 import searchRoutes from "./routes/search.js";
 import vendorRoutes from "./routes/vendors.js";
+import vendorDebitNoteRoutes from "./routes/vendor-debit-notes.js";
 import purchaseRoutes from "./routes/purchases.js";
 import stockMovementRoutes from "./routes/stock-movements.js";
 import putawayRoutes from "./routes/putaway.js";
@@ -85,6 +86,7 @@ export function buildServer(): FastifyInstance {
   app.register(binRoutes);
   app.register(searchRoutes);
   app.register(vendorRoutes);
+  app.register(vendorDebitNoteRoutes);
   app.register(purchaseRoutes);
   app.register(stockMovementRoutes);
   app.register(putawayRoutes);

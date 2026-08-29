@@ -37,6 +37,10 @@ export interface CreatePurchaseInvoiceInput {
   vendorId: string;
   invoiceNumber: string;
   invoiceDate: string;
+  // Owner-requested — free text off the printed slip (e.g. "12:35 pm"),
+  // display/reference only, never used in business logic. Found missing
+  // while checking a real vendor invoice against this form.
+  invoiceTime?: string | null;
   invoiceValueStated: number;
   paymentTermsDays: number;
   billLevelDiscount: number;
@@ -186,13 +190,13 @@ export async function createPurchaseInvoice(input: CreatePurchaseInvoiceInput) {
 
     const { rows: invoiceRows } = await client.query(
       `INSERT INTO purchase_invoices
-         (vendor_id, invoice_number, invoice_date, invoice_value_stated, payment_terms_days,
+         (vendor_id, invoice_number, invoice_date, invoice_time, invoice_value_stated, payment_terms_days,
           bill_level_discount, freight_and_charges, round_off, taxable_value_total, tax_total,
           net_payable_computed, reconciliation_diff, reconciliation_acknowledged, entry_method, source, created_by, device_id, purchase_order_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING id`,
       [
-        input.vendorId, input.invoiceNumber, input.invoiceDate, input.invoiceValueStated, input.paymentTermsDays,
+        input.vendorId, input.invoiceNumber, input.invoiceDate, input.invoiceTime ?? null, input.invoiceValueStated, input.paymentTermsDays,
         input.billLevelDiscount, input.freightAndCharges, input.roundOff, round2(taxableValueTotal), round2(taxTotal),
         round2(netPayableComputed), round2(reconciliationDiff), Math.abs(reconciliationDiff) > tolerance,
         input.entryMethod, input.source, input.createdBy, input.deviceId, input.purchaseOrderId,
