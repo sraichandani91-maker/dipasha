@@ -1,0 +1,23 @@
+# Deploys the static web console only (apps/web) — the API
+# (apps/api) is a long-running Fastify server with a persistent
+# Postgres pool and always-on background jobs (WhatsApp dispatcher,
+# daily reports, refill reminders); none of that can run on Netlify's
+# stateless functions, so it must be hosted separately (see
+# RUNBOOK.md's Docker Compose + Caddy setup, or any Node host with a
+# real Postgres). Point this build at that API with VITE_API_BASE_URL.
+#
+# The build command runs `npm ci` at the repo root (not inside
+# apps/web) because apps/web depends on packages/theme via the npm
+# workspaces "*" protocol — installing from inside apps/web alone
+# cannot resolve that dependency.
+[build]
+  command = "npm ci && npm run build --workspace apps/web"
+  publish = "apps/web/dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Set in the Netlify UI (Site settings -> Environment variables), not
+# here — VITE_API_BASE_URL is the real API's origin, e.g.
+# "https://api.yourdomain.com" (no trailing slash, no "/api" suffix —
+# apps/api's routes are mounted at root).

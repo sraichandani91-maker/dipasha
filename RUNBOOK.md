@@ -53,6 +53,18 @@ cp .env.example .env   # different POSTGRES_PASSWORD, different DOMAIN (e.g. sta
 
 Because `docker-compose.yml` uses the default project name `dipasha`, give the staging checkout its own directory (as above) so Docker doesn't collide the two stacks' volumes and networks. Never test a migration against production data first — always run it on staging.
 
+## Testing the web console on Netlify/Vercel (frontend only)
+
+`apps/web` is a static Vite build and can be hosted on Netlify or Vercel for quick, shareable-link testing without provisioning a VPS. `apps/api` **cannot** — it's a long-running Fastify server with a persistent Postgres connection pool and several always-on background jobs (the WhatsApp dispatcher retry loop, the daily report generator, chronic-refill reminders), none of which survive on stateless serverless/edge functions. The API still needs a real host with a real Postgres — the VPS/Docker setup above, or any other host that runs a persistent Node process (Railway, Render, Fly.io are all faster to stand up than a VPS if you just want something to test against).
+
+Once the API is running somewhere reachable over HTTPS:
+
+1. **Netlify** — `netlify.toml` at the repo root already sets the build command (`npm ci && npm run build --workspace apps/web`, run from the repo root because `apps/web` depends on `packages/theme` via npm workspaces — a "Base directory" of `apps/web` alone can't resolve that) and publish directory (`apps/web/dist`). In the Netlify UI, set the environment variable `VITE_API_BASE_URL` to the API's origin (e.g. `https://api.yourdomain.com`, no trailing slash, no `/api` suffix).
+2. **Vercel** — `vercel.json` at the repo root does the same. Set `VITE_API_BASE_URL` under Project Settings → Environment Variables.
+3. **On the API itself**, set `CORS_ORIGINS` to the Netlify/Vercel URL(s) (comma-separated) once you know them — it defaults to allowing any origin, which is fine for a first test but should be tightened once the real frontend URL is known.
+
+Leaving `VITE_API_BASE_URL` unset keeps the existing behavior (a relative `/api` path) exactly as it is for local dev and the Docker+Caddy setup — this is purely additive.
+
 ## Local development (no Docker required for the API or console)
 
 ```

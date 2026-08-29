@@ -1,5 +1,6 @@
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import multipart from "@fastify/multipart";
+import cors from "@fastify/cors";
 import { config } from "./config.js";
 import { pingDatabase } from "./db.js";
 import { captureException } from "./lib/error-tracking.js";
@@ -79,6 +80,12 @@ export function buildServer(): FastifyInstance {
     });
   });
 
+  // A web build hosted on a different origin than this API (e.g.
+  // Netlify/Vercel with apps/api elsewhere) needs CORS — same-origin
+  // deployments (Docker+Caddy, local dev proxy) are unaffected either way.
+  app.register(cors, {
+    origin: config.corsOrigins === "*" ? true : config.corsOrigins.split(",").map((o) => o.trim()),
+  });
   app.register(multipart, { limits: { fileSize: config.maxUploadBytes } });
   app.register(authPlugin);
   app.register(activityLogPlugin);

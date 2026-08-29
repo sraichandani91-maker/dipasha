@@ -5,6 +5,17 @@ export const config = {
   logLevel: process.env.LOG_LEVEL ?? "info",
   databaseUrl: process.env.DATABASE_URL ?? "",
 
+  // Only matters when the web build is hosted on a different origin
+  // than the API — the Docker+Caddy setup and local dev both put the
+  // API behind the same origin (via a reverse proxy), where CORS is a
+  // no-op either way. Comma-separated allow-list, e.g.
+  // "https://app.yourdomain.com,https://staging.yourdomain.com".
+  // Defaults to "*" (any origin) — safe here because auth is a bearer
+  // token read from localStorage and sent via an Authorization header,
+  // never a cookie, so there's no ambient-credential CSRF surface a
+  // wildcard origin would open up. Tighten this once real domains exist.
+  corsOrigins: process.env.CORS_ORIGINS ?? "*",
+
   // Auth (Section 3, Section 12). No real SMS/WhatsApp provider is wired
   // up yet (Section 14 — that's the owner's account to set up, M8) so OTP
   // delivery is a pluggable interface with a dev console sender for now.

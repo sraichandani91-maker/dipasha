@@ -1,4 +1,8 @@
-const BASE = "/api";
+// Defaults to the relative "/api" path Docker+Caddy (and the Vite dev
+// proxy) both split to the API container — see vite-env.d.ts. Set
+// VITE_API_BASE_URL at build time when the web build is hosted
+// separately from the API (Netlify/Vercel static hosting, no proxy).
+const BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 // Tokens live in localStorage for now — pragmatic for an internal staff
 // tool behind its own auth, revisit with httpOnly cookies + CSRF if this
