@@ -52,6 +52,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("products");
   const [fulfillRequest, setFulfillRequest] = useState<FulfillRequest | null>(null);
   const [reviewMode, setReviewMode] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
 
   // Rider's role has no use for the default "products" landing tab
   // (Section 8: "Rider logs in, sees assigned trips only") — `user` only
@@ -82,7 +83,14 @@ export default function App() {
             <span className="brand-tagline">because we care..</span>
           </span>
         </span>
-        <nav>
+        <button
+          className="nav-toggle"
+          aria-label={navOpen ? "Close menu" : "Open menu"}
+          onClick={() => setNavOpen((v) => !v)}
+        >
+          {navOpen ? "✕" : "☰"}
+        </button>
+        <nav className={navOpen ? "open" : ""} onClick={() => setNavOpen(false)}>
           {user.role === "owner" && (
             <button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}>Home</button>
           )}

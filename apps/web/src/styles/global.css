@@ -57,6 +57,49 @@ body {
   margin-left: 8px;
 }
 
+.nav-toggle {
+  display: none;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.nav-toggle:hover { background: rgba(255,255,255,0.12); }
+
+/* -- Small screens (phones): every role's nav is too long to fit inline,
+   and the picker/rider roles are the ones actually carrying a phone
+   around the store — so this isn't a nice-to-have, it's the primary
+   surface for those two roles. Nav collapses behind a hamburger toggle;
+   wide content (tables especially) scrolls inside .content instead of
+   squeezing the whole layout down to fit. -- */
+@media (max-width: 720px) {
+  .topbar { flex-wrap: wrap; padding: 10px 12px; }
+  .topbar .brand-tagline { display: none; }
+  .topbar .who { display: none; }
+  .nav-toggle { display: inline-flex; }
+  .topbar nav {
+    display: none;
+    order: 10;
+    width: 100%;
+    flex-direction: column;
+    gap: 2px;
+    margin-left: 0;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.2);
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
+  }
+  .topbar nav.open { display: flex; }
+  .topbar nav button { width: 100%; text-align: left; padding: 12px 14px; font-size: 14px; }
+  .content { padding: 14px; overflow-x: auto; }
+}
+
 .btn-primary {
   background: var(--brand-green);
   color: #fff;
