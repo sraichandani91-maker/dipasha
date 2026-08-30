@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { verifySecret } from "../auth/hash.js";
 import { signAccessToken, signRefreshToken, verifyToken } from "../auth/jwt.js";
-import { findUserByUsername, findUserById, type UserRole } from "../repo/users.js";
+import { findUserByUsername, findUserById, getUserOverrideKeys, type UserRole } from "../repo/users.js";
 
 const loginSchema = z.object({ username: z.string().min(1), password: z.string().min(1) });
 const refreshSchema = z.object({ refreshToken: z.string().min(1) });
@@ -87,12 +87,20 @@ export default async function authRoutes(app: FastifyInstance) {
   app.get("/auth/me", { preHandler: app.authenticate }, async (req, reply) => {
     const user = await findUserById(req.auth!.sub);
     if (!user) return reply.code(404).send({ error: "not_found" });
+    // Same exclusion as requireRole (plugins/auth.ts): an impersonated
+    // session never picks up the real (owner) account's own overrides —
+    // otherwise "impersonate picker_packer" would silently show whatever
+    // extra tabs the owner happens to have granted themselves, which
+    // isn't what impersonation is for (testing a role as that role sees
+    // it, nothing more).
+    const permissionOverrides = req.auth!.impersonating ? [] : await getUserOverrideKeys(user.id);
     reply.send({
       id: user.id,
       name: user.name,
       role: req.auth!.role,
       actualRole: req.auth!.actualRole,
       impersonating: req.auth!.impersonating,
+      permissionOverrides,
     });
   });
 

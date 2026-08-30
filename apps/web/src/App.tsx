@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "./auth/AuthContext.js";
+import { useAuth, type CurrentUser } from "./auth/AuthContext.js";
 import LoginPage from "./pages/LoginPage.js";
 import ProductsPage from "./pages/ProductsPage.js";
 import BinsPage from "./pages/BinsPage.js";
@@ -73,6 +73,17 @@ export default function App() {
   if (loading) return null;
   if (!user) return <LoginPage />;
 
+  // Section 10.2 "Per-user permission overrides above the base role" —
+  // an owner can grant a specific staff account extra role-level access
+  // (e.g. a picker who should also be able to bill/purchase) without
+  // changing their base role for everyone in it. The backend already
+  // enforces this on every route (requireRole in plugins/auth.ts); this
+  // is the matching frontend half — without it, a granted override was
+  // invisible, since the tab that unlocks the feature never appeared.
+  const overrides = user.permissionOverrides;
+  const can = (...roles: Array<CurrentUser["role"]>) =>
+    roles.includes(user.role) || roles.some((r) => overrides.includes(r));
+
   return (
     <div className="app-shell" style={{ flexDirection: "column" }}>
       <div className="topbar">
@@ -91,88 +102,88 @@ export default function App() {
           {navOpen ? "✕" : "☰"}
         </button>
         <nav className={navOpen ? "open" : ""} onClick={() => setNavOpen(false)}>
-          {user.role === "owner" && (
+          {can("owner") && (
             <button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}>Home</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "pos" ? "active" : ""} onClick={() => setTab("pos")}>Billing (POS)</button>
           )}
           <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}>Products</button>
           <button className={tab === "bins" ? "active" : ""} onClick={() => setTab("bins")}>Bins</button>
-          {(user.role === "owner" || user.role === "store_manager" || user.role === "picker_packer") && (
+          {can("owner", "store_manager", "picker_packer") && (
             <button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}>Inventory</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "purchases" ? "active" : ""} onClick={() => setTab("purchases")}>Purchase entry</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "scan-invoice" ? "active" : ""} onClick={() => setTab("scan-invoice")}>Scan invoice</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "stock-received" ? "active" : ""} onClick={() => setTab("stock-received")}>Stock received</button>
           )}
           <button className={tab === "putaway" ? "active" : ""} onClick={() => setTab("putaway")}>Put-away</button>
           <button className={tab === "requests" ? "active" : ""} onClick={() => setTab("requests")}>Requests</button>
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "purchase-orders" ? "active" : ""} onClick={() => setTab("purchase-orders")}>Purchase orders</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "order-book" ? "active" : ""} onClick={() => setTab("order-book")}>Order book</button>
           )}
           <button className={tab === "cycle-counts" ? "active" : ""} onClick={() => setTab("cycle-counts")}>Cycle counts</button>
           <button className={tab === "cold-chain" ? "active" : ""} onClick={() => setTab("cold-chain")}>Cold chain</button>
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "expiry-audit" ? "active" : ""} onClick={() => setTab("expiry-audit")}>Expiry audit</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "write-offs" ? "active" : ""} onClick={() => setTab("write-offs")}>Write-offs</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "reports" ? "active" : ""} onClick={() => setTab("reports")}>Reports</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "prescribers" ? "active" : ""} onClick={() => setTab("prescribers")}>Prescribers</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "chronic" ? "active" : ""} onClick={() => setTab("chronic")}>Chronic patients</button>
           )}
-          {user.role === "owner" && (
+          {can("owner") && (
             <button className={tab === "margins" ? "active" : ""} onClick={() => setTab("margins")}>Margins</button>
           )}
-          {user.role === "owner" && (
+          {can("owner") && (
             <button className={tab === "financials" ? "active" : ""} onClick={() => setTab("financials")}>Financials</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "accounting" ? "active" : ""} onClick={() => setTab("accounting")}>Accounting</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "customers" ? "active" : ""} onClick={() => setTab("customers")}>Customers</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "vendor-comparison" ? "active" : ""} onClick={() => setTab("vendor-comparison")}>Vendor comparison</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "notifications" ? "active" : ""} onClick={() => setTab("notifications")}>Notifications</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "whatsapp-inbox" ? "active" : ""} onClick={() => setTab("whatsapp-inbox")}>WhatsApp inbox</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager") && (
+          {can("owner", "store_manager") && (
             <button className={tab === "delivery-orders" ? "active" : ""} onClick={() => setTab("delivery-orders")}>Delivery orders</button>
           )}
-          {(user.role === "owner" || user.role === "store_manager" || user.role === "picker_packer") && (
+          {can("owner", "store_manager", "picker_packer") && (
             <button className={tab === "pick-pack" ? "active" : ""} onClick={() => setTab("pick-pack")}>Pick &amp; pack</button>
           )}
-          {user.role === "rider" && (
+          {can("rider") && (
             <button className={tab === "rider" ? "active" : ""} onClick={() => setTab("rider")}>My trips</button>
           )}
-          {user.role === "owner" && (
+          {can("owner") && (
             <button className={tab === "staff" ? "active" : ""} onClick={() => setTab("staff")}>Staff</button>
           )}
-          {user.role === "owner" && (
+          {can("owner") && (
             <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>Settings</button>
           )}
-          {user.role === "owner" && (
+          {can("owner") && (
             <button className={tab === "activity-logs" ? "active" : ""} onClick={() => setTab("activity-logs")}>Activity logs</button>
           )}
         </nav>

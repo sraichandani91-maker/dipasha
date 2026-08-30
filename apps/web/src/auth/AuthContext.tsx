@@ -7,6 +7,7 @@ export interface CurrentUser {
   role: "owner" | "store_manager" | "picker_packer" | "rider";
   actualRole: string;
   impersonating: boolean;
+  permissionOverrides: string[];
 }
 
 interface AuthState {
