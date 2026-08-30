@@ -101,24 +101,30 @@ async function main() {
   }
 
   // -- Users --
+  // Username + password login (owner-requested — replaced phone + OTP to
+  // avoid needing a paid SMS/WhatsApp provider). `phone` is kept on each
+  // seeded account since it's still the target for outbound WhatsApp
+  // notifications (the owner's daily digest, refill reminders, etc.) —
+  // it just isn't how anyone logs in anymore.
   const pin = "1234";
-  const pinHash = await hashSecret(pin);
-  const userSpecs: Array<{ phone: string; name: string; role: string }> = [
-    { phone: "+919999900001", name: "Owner (seed)", role: "owner" },
-    { phone: "+919999900002", name: "Store Manager (seed)", role: "store_manager" },
-    { phone: "+919999900003", name: "Picker Packer (seed)", role: "picker_packer" },
-    { phone: "+919999900004", name: "Rider (seed)", role: "rider" },
+  const password = "dipasha123";
+  const [pinHash, passwordHash] = await Promise.all([hashSecret(pin), hashSecret(password)]);
+  const userSpecs: Array<{ username: string; phone: string; name: string; role: string }> = [
+    { username: "owner", phone: "+919999900001", name: "Owner (seed)", role: "owner" },
+    { username: "manager", phone: "+919999900002", name: "Store Manager (seed)", role: "store_manager" },
+    { username: "picker", phone: "+919999900003", name: "Picker Packer (seed)", role: "picker_packer" },
+    { username: "rider", phone: "+919999900004", name: "Rider (seed)", role: "rider" },
   ];
   const userIds: Record<string, string> = {};
   for (const u of userSpecs) {
     const { rows } = await db.query(
-      `INSERT INTO users (phone, name, role, pin_hash) VALUES ($1, $2, $3, $4) RETURNING id`,
-      [u.phone, u.name, u.role, pinHash]
+      `INSERT INTO users (username, password_hash, phone, name, role, pin_hash) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [u.username, passwordHash, u.phone, u.name, u.role, pinHash]
     );
     userIds[u.role] = rows[0].id;
   }
   const ownerId = userIds.owner;
-  console.log(`Seeded ${userSpecs.length} users (PIN for all: ${pin})`);
+  console.log(`Seeded ${userSpecs.length} users (password for all: ${password}, PIN: ${pin})`);
 
   // -- Bins --
   const binIds: { regular: string[]; cc: string[]; sh: string[]; other: Record<string, string[]> } = {
@@ -235,7 +241,7 @@ async function main() {
   console.log(`Seeded ${batchCount} batches with opening-stock movements`);
   console.log("\n== Dev login credentials (this environment only) ==");
   for (const u of userSpecs) {
-    console.log(`  ${u.role.padEnd(14)} ${u.phone}  PIN ${pin}  (OTP: POST /auth/otp/request, dev mode echoes the code)`);
+    console.log(`  ${u.role.padEnd(14)} username: ${u.username.padEnd(10)} password: ${password}`);
   }
 }
 

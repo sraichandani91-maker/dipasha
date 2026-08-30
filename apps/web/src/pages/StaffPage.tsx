@@ -6,7 +6,8 @@ type Role = (typeof ROLES)[number];
 
 interface UserRow {
   id: string;
-  phone: string;
+  username: string | null;
+  phone: string | null;
   name: string;
   role: Role;
   status: "active" | "suspended";
@@ -63,12 +64,13 @@ function DirectoryTab() {
       {error && <p style={{ color: "var(--danger, #c0392b)" }}>{error}</p>}
       <button className="btn-primary" onClick={() => setShowNew(true)}>+ New staff account</button>
       <table className="data-table" style={{ marginTop: 12 }}>
-        <thead><tr><th>Name</th><th>Phone</th><th>Role</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Role</th><th>Status</th><th></th></tr></thead>
         <tbody>
           {users.map((u) => (
             <tr key={u.id}>
               <td>{u.name}</td>
-              <td>{u.phone}</td>
+              <td>{u.username ?? "—"}</td>
+              <td>{u.phone ?? "—"}</td>
               <td>{u.role}</td>
               <td>{u.status}</td>
               <td style={{ display: "flex", gap: 4 }}>
@@ -88,8 +90,10 @@ function DirectoryTab() {
 }
 
 function NewUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [phone, setPhone] = useState("+91");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [role, setRole] = useState<Role>("picker_packer");
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
@@ -99,10 +103,15 @@ function NewUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
     setBusy(true);
     setError(null);
     try {
-      await api.post("/users", { phone, name, role, pin: pin || undefined });
+      await api.post("/users", { username, password, name, phone: phone || undefined, role, pin: pin || undefined });
       onCreated();
     } catch (err) {
-      setError(err instanceof ApiError && err.body?.error === "phone_already_in_use" ? "That phone number is already registered." : "Could not create the account.");
+      const code = err instanceof ApiError ? err.body?.error : null;
+      setError(
+        code === "username_already_in_use" ? "That username is already taken." :
+        code === "phone_already_in_use" ? "That phone number is already registered." :
+        "Could not create the account."
+      );
     } finally {
       setBusy(false);
     }
@@ -114,7 +123,9 @@ function NewUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
         <h3 style={{ marginTop: 0 }}>New staff account</h3>
         {error && <p style={{ color: "var(--danger, #c0392b)" }}>{error}</p>}
         <div className="field"><label>Name</label><input value={name} onChange={(e) => setName(e.target.value)} /></div>
-        <div className="field"><label>Phone</label><input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+        <div className="field"><label>Username</label><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="letters, numbers, _ and . only" autoCapitalize="none" /></div>
+        <div className="field"><label>Password</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" /></div>
+        <div className="field"><label>Phone (optional — used for WhatsApp notifications, not login)</label><input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91…" /></div>
         <div className="field">
           <label>Role</label>
           <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
@@ -123,7 +134,7 @@ function NewUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
         </div>
         <div className="field"><label>PIN (optional, 4-8 digits)</label><input value={pin} onChange={(e) => setPin(e.target.value)} /></div>
         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <button className="btn-primary" disabled={busy || !name.trim() || phone.length < 6} onClick={submit}>Create</button>
+          <button className="btn-primary" disabled={busy || !name.trim() || username.length < 3 || password.length < 6} onClick={submit}>Create</button>
           <button className="btn-secondary" onClick={onClose}>Cancel</button>
         </div>
       </div>
@@ -134,6 +145,7 @@ function NewUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
 function ManageUserModal({ user, onClose, onChanged }: { user: UserRow; onClose: () => void; onChanged: () => void }) {
   const [role, setRole] = useState<Role>(user.role);
   const [newPin, setNewPin] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [overrides, setOverrides] = useState<Array<{ permissionKey: Role; note: string | null }>>([]);
   const [overrideKey, setOverrideKey] = useState<Role>("owner");
   const [rider, setRider] = useState<{ vehicleType: string | null; vehicleNumber: string | null; licenseNumber: string | null } | null>(null);
@@ -181,6 +193,21 @@ function ManageUserModal({ user, onClose, onChanged }: { user: UserRow; onClose:
       setNewPin("");
     } catch {
       setMessage("Could not reset PIN.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetPassword() {
+    if (newPassword.length < 6) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await api.post(`/users/${user.id}/reset-password`, { password: newPassword });
+      setMessage("Password reset.");
+      setNewPassword("");
+    } catch {
+      setMessage("Could not reset password.");
     } finally {
       setBusy(false);
     }
@@ -235,7 +262,7 @@ function ManageUserModal({ user, onClose, onChanged }: { user: UserRow; onClose:
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
       <div className="card" style={{ width: 520, maxHeight: "90vh", overflowY: "auto", background: "var(--surface)" }}>
-        <h3 style={{ marginTop: 0 }}>{user.name} <span style={{ fontWeight: 400, color: "var(--muted)" }}>({user.phone})</span></h3>
+        <h3 style={{ marginTop: 0 }}>{user.name} <span style={{ fontWeight: 400, color: "var(--muted)" }}>({user.username ?? "no username"})</span></h3>
         {message && <p>{message}</p>}
 
         <div className="field">
@@ -245,6 +272,14 @@ function ManageUserModal({ user, onClose, onChanged }: { user: UserRow; onClose:
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
             <button className="btn-secondary" disabled={busy || role === user.role} onClick={saveRole}>Save role</button>
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Reset password</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New password (min. 6 characters)" />
+            <button className="btn-secondary" disabled={busy || newPassword.length < 6} onClick={resetPassword}>Reset</button>
           </div>
         </div>
 

@@ -4,10 +4,12 @@ export type UserRole = "owner" | "store_manager" | "picker_packer" | "rider";
 
 export interface User {
   id: string;
-  phone: string;
+  username: string | null;
+  phone: string | null;
   name: string;
   role: UserRole;
   pinHash: string | null;
+  passwordHash: string | null;
   status: "active" | "suspended";
 }
 
@@ -16,28 +18,32 @@ function requirePool() {
   return pool;
 }
 
+const USER_COLUMNS = "id, username, phone, name, role, pin_hash, password_hash, status";
+
 function mapRow(row: any): User {
   return {
     id: row.id,
+    username: row.username,
     phone: row.phone,
     name: row.name,
     role: row.role,
     pinHash: row.pin_hash,
+    passwordHash: row.password_hash,
     status: row.status,
   };
 }
 
-export async function findUserByPhone(phone: string): Promise<User | null> {
+export async function findUserByUsername(username: string): Promise<User | null> {
   const { rows } = await requirePool().query(
-    `SELECT id, phone, name, role, pin_hash, status FROM users WHERE phone = $1`,
-    [phone]
+    `SELECT ${USER_COLUMNS} FROM users WHERE username = $1`,
+    [username]
   );
   return rows[0] ? mapRow(rows[0]) : null;
 }
 
 export async function findUserById(id: string): Promise<User | null> {
   const { rows } = await requirePool().query(
-    `SELECT id, phone, name, role, pin_hash, status FROM users WHERE id = $1`,
+    `SELECT ${USER_COLUMNS} FROM users WHERE id = $1`,
     [id]
   );
   return rows[0] ? mapRow(rows[0]) : null;
@@ -52,17 +58,19 @@ export async function listActiveRiders(): Promise<Array<{ id: string; name: stri
 }
 
 export async function createUser(input: {
-  phone: string;
+  username: string;
+  passwordHash: string;
+  phone: string | null;
   name: string;
   role: UserRole;
   pinHash: string | null;
   createdBy?: string | null;
 }): Promise<User> {
   const { rows } = await requirePool().query(
-    `INSERT INTO users (phone, name, role, pin_hash, created_by)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, phone, name, role, pin_hash, status`,
-    [input.phone, input.name, input.role, input.pinHash, input.createdBy ?? null]
+    `INSERT INTO users (username, password_hash, phone, name, role, pin_hash, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING ${USER_COLUMNS}`,
+    [input.username, input.passwordHash, input.phone, input.name, input.role, input.pinHash, input.createdBy ?? null]
   );
   return mapRow(rows[0]);
 }
@@ -79,18 +87,18 @@ export class UserError extends Error {
 // (vendors, prescribers, bins).
 export async function listUsers(): Promise<User[]> {
   const { rows } = await requirePool().query(
-    `SELECT id, phone, name, role, pin_hash, status FROM users ORDER BY (status = 'active') DESC, name`
+    `SELECT ${USER_COLUMNS} FROM users ORDER BY (status = 'active') DESC, name`
   );
   return rows.map(mapRow);
 }
 
-export async function updateUser(id: string, input: { name?: string; phone?: string }): Promise<User> {
+export async function updateUser(id: string, input: { name?: string; phone?: string; username?: string }): Promise<User> {
   const existing = await findUserById(id);
   if (!existing) throw new UserError("not_found");
   const { rows } = await requirePool().query(
-    `UPDATE users SET name = COALESCE($2, name), phone = COALESCE($3, phone) WHERE id = $1
-     RETURNING id, phone, name, role, pin_hash, status`,
-    [id, input.name ?? null, input.phone ?? null]
+    `UPDATE users SET name = COALESCE($2, name), phone = COALESCE($3, phone), username = COALESCE($4, username) WHERE id = $1
+     RETURNING ${USER_COLUMNS}`,
+    [id, input.name ?? null, input.phone ?? null, input.username ?? null]
   );
   return mapRow(rows[0]);
 }
@@ -104,7 +112,7 @@ export async function updateUser(id: string, input: { name?: string; phone?: str
 // judgment call in DECISIONS.md, not a silent scope-narrowing.
 export async function setUserStatus(id: string, status: "active" | "suspended"): Promise<User> {
   const { rows } = await requirePool().query(
-    `UPDATE users SET status = $2 WHERE id = $1 RETURNING id, phone, name, role, pin_hash, status`,
+    `UPDATE users SET status = $2 WHERE id = $1 RETURNING ${USER_COLUMNS}`,
     [id, status]
   );
   if (!rows[0]) throw new UserError("not_found");
@@ -113,11 +121,16 @@ export async function setUserStatus(id: string, status: "active" | "suspended"):
 
 export async function setUserRole(id: string, role: UserRole): Promise<User> {
   const { rows } = await requirePool().query(
-    `UPDATE users SET role = $2 WHERE id = $1 RETURNING id, phone, name, role, pin_hash, status`,
+    `UPDATE users SET role = $2 WHERE id = $1 RETURNING ${USER_COLUMNS}`,
     [id, role]
   );
   if (!rows[0]) throw new UserError("not_found");
   return mapRow(rows[0]);
+}
+
+export async function setUserPassword(id: string, passwordHash: string): Promise<void> {
+  const { rowCount } = await requirePool().query(`UPDATE users SET password_hash = $2 WHERE id = $1`, [id, passwordHash]);
+  if (!rowCount) throw new UserError("not_found");
 }
 
 export async function setUserPin(id: string, pinHash: string): Promise<void> {
@@ -189,7 +202,7 @@ export async function addRiderDocument(userId: string, docType: string, filePath
 
 export async function listRidersFull(): Promise<Array<User & { vehicleType: string | null; vehicleNumber: string | null; licenseNumber: string | null; documentCount: number }>> {
   const { rows } = await requirePool().query(`
-    SELECT u.id, u.phone, u.name, u.role, u.pin_hash, u.status,
+    SELECT u.id, u.username, u.phone, u.name, u.role, u.pin_hash, u.password_hash, u.status,
       rd.vehicle_type, rd.vehicle_number, rd.license_number,
       (SELECT count(*) FROM rider_documents d WHERE d.user_id = u.id) AS document_count
     FROM users u

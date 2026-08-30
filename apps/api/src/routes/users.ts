@@ -13,6 +13,7 @@ import {
   listRidersFull,
   listUsers,
   revokePermissionOverride,
+  setUserPassword,
   setUserPin,
   setUserRole,
   setUserStatus,
@@ -24,9 +25,14 @@ import {
 import { listActivity, listRoster } from "../repo/activity-log.js";
 
 const ROLES = ["owner", "store_manager", "picker_packer", "rider"] as const;
+// Login identifier, not a display name — kept plain (letters, numbers,
+// underscore, dot) so it's easy to type at a shared counter terminal.
+const USERNAME_RE = /^[a-zA-Z0-9_.]+$/;
 
 const createUserSchema = z.object({
-  phone: z.string().min(6).max(20),
+  username: z.string().min(3).max(30).regex(USERNAME_RE, "letters, numbers, underscore, and dot only"),
+  password: z.string().min(6),
+  phone: z.string().min(6).max(20).optional(),
   name: z.string().min(1),
   role: z.enum(ROLES),
   pin: z.string().min(4).max(8).optional(),
@@ -35,6 +41,7 @@ const createUserSchema = z.object({
 const updateUserSchema = z.object({
   name: z.string().min(1).optional(),
   phone: z.string().min(6).max(20).optional(),
+  username: z.string().min(3).max(30).regex(USERNAME_RE).optional(),
 });
 
 /**
@@ -53,12 +60,20 @@ export default async function userRoutes(app: FastifyInstance) {
     const parsed = createUserSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
     const b = parsed.data;
-    const pinHash = b.pin ? await hashSecret(b.pin) : null;
+    const [passwordHash, pinHash] = await Promise.all([
+      hashSecret(b.password),
+      b.pin ? hashSecret(b.pin) : Promise.resolve(null),
+    ]);
     try {
-      const created = await createUser({ phone: b.phone, name: b.name, role: b.role, pinHash, createdBy: req.auth!.sub });
+      const created = await createUser({
+        username: b.username, passwordHash, phone: b.phone ?? null, name: b.name, role: b.role, pinHash, createdBy: req.auth!.sub,
+      });
       reply.code(201).send(created);
     } catch (err: any) {
-      if (err?.code === "23505") return reply.code(409).send({ error: "phone_already_in_use" });
+      if (err?.code === "23505") {
+        const onUsername = String(err?.constraint ?? "").includes("username") || String(err?.detail ?? "").includes("(username)");
+        return reply.code(409).send({ error: onUsername ? "username_already_in_use" : "phone_already_in_use" });
+      }
       throw err;
     }
   });
@@ -99,6 +114,19 @@ export default async function userRoutes(app: FastifyInstance) {
     if (params.data.id === req.auth!.sub) return reply.code(409).send({ error: "cannot_change_own_role" });
     try {
       reply.send(await setUserRole(params.data.id, body.data.role as UserRole));
+    } catch (err) {
+      if (err instanceof UserError) return reply.code(404).send({ error: err.code });
+      throw err;
+    }
+  });
+
+  app.post("/users/:id/reset-password", { preHandler: [app.authenticate, app.requireRole("owner")] }, async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    const body = z.object({ password: z.string().min(6) }).safeParse(req.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_body" });
+    try {
+      await setUserPassword(params.data.id, await hashSecret(body.data.password));
+      reply.send({ reset: true });
     } catch (err) {
       if (err instanceof UserError) return reply.code(404).send({ error: err.code });
       throw err;

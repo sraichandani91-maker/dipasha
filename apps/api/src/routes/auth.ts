@@ -1,73 +1,32 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { config } from "../config.js";
-import { generateNumericCode, hashSecret, verifySecret } from "../auth/hash.js";
-import { ConsoleOtpSender } from "../auth/otp-sender.js";
+import { verifySecret } from "../auth/hash.js";
 import { signAccessToken, signRefreshToken, verifyToken } from "../auth/jwt.js";
-import { findUserByPhone, findUserById, type UserRole } from "../repo/users.js";
-import { consumeOtp, findActiveOtp, incrementOtpAttempts, insertOtp } from "../repo/otp.js";
+import { findUserByUsername, findUserById, type UserRole } from "../repo/users.js";
 
-const phoneSchema = z.object({ phone: z.string().min(6).max(20) });
-const verifySchema = z.object({ phone: z.string().min(6).max(20), code: z.string().length(6) });
+const loginSchema = z.object({ username: z.string().min(1), password: z.string().min(1) });
 const refreshSchema = z.object({ refreshToken: z.string().min(1) });
 const pinSchema = z.object({ refreshToken: z.string().min(1), pin: z.string().min(4).max(8) });
 const impersonateSchema = z.object({ role: z.enum(["owner", "store_manager", "picker_packer", "rider"]) });
 
 export default async function authRoutes(app: FastifyInstance) {
-  const otpSender = new ConsoleOtpSender(app.log);
-
-  app.post("/auth/otp/request", async (req, reply) => {
-    const parsed = phoneSchema.safeParse(req.body);
+  // Username + password (owner-requested — replaces the earlier phone +
+  // OTP flow, which would have needed a paid SMS/WhatsApp provider to go
+  // anywhere near real use). Staff accounts are still created by the
+  // Owner only (Section 10.2), never self-signup, so there's no
+  // registration endpoint here to match — just login.
+  app.post("/auth/login", async (req, reply) => {
+    const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
 
-    const user = await findUserByPhone(parsed.data.phone);
-    if (!user) {
-      // Staff accounts are created by Owner/Manager (Section 10.2), never
-      // self-signup — a phone with no account simply can't request an
-      // OTP. Generic response either way; these are known shop numbers,
-      // not public users, so existence-leak isn't a real concern here.
-      return reply.code(404).send({ error: "no_account_for_phone" });
-    }
-    if (user.status !== "active") {
-      return reply.code(403).send({ error: "account_suspended" });
-    }
-
-    const code = generateNumericCode();
-    const codeHash = await hashSecret(code);
-    await insertOtp(user.phone, codeHash, config.otpTtlSeconds);
-    await otpSender.send(user.phone, code);
-
-    reply.send({
-      status: "sent",
-      expiresInSeconds: config.otpTtlSeconds,
-      // NEVER include the code outside development — this is the entire
-      // reason a real SMS/WhatsApp provider (M8) has to replace the dev
-      // sender before this goes anywhere near real staff.
-      devCode: config.nodeEnv === "development" ? code : undefined,
-    });
-  });
-
-  app.post("/auth/otp/verify", async (req, reply) => {
-    const parsed = verifySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
-    const { phone, code } = parsed.data;
-
-    const user = await findUserByPhone(phone);
-    if (!user || user.status !== "active") {
+    const user = await findUserByUsername(parsed.data.username);
+    // Same generic error whether the username doesn't exist or the
+    // password is wrong — never leak which one was incorrect.
+    if (!user || user.status !== "active" || !user.passwordHash) {
       return reply.code(401).send({ error: "invalid_credentials" });
     }
-
-    const otp = await findActiveOtp(phone);
-    if (!otp || otp.attempts >= config.otpMaxAttempts) {
-      return reply.code(401).send({ error: "no_active_otp_or_too_many_attempts" });
-    }
-
-    const ok = await verifySecret(code, otp.codeHash);
-    if (!ok) {
-      await incrementOtpAttempts(otp.id);
-      return reply.code(401).send({ error: "incorrect_code" });
-    }
-    await consumeOtp(otp.id);
+    const ok = await verifySecret(parsed.data.password, user.passwordHash);
+    if (!ok) return reply.code(401).send({ error: "invalid_credentials" });
 
     const claims = { sub: user.id, role: user.role, actualRole: user.role, impersonating: false };
     reply.send({

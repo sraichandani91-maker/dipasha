@@ -5,34 +5,17 @@ import Logo from "../components/Logo.js";
 
 export default function LoginPage() {
   const { login } = useAuth();
-  const [phone, setPhone] = useState("+91");
-  const [step, setStep] = useState<"phone" | "code">("phone");
-  const [code, setCode] = useState("");
-  const [devCode, setDevCode] = useState<string | null>(null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function requestOtp(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setBusy(true);
     try {
-      const res = await api.post("/auth/otp/request", { phone });
-      setDevCode(res.devCode ?? null);
-      setStep("code");
-    } catch (err) {
-      setError(err instanceof ApiError ? describeAuthError(err) : "Could not reach the server.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function verifyOtp(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      const res = await api.post("/auth/otp/verify", { phone, code });
+      const res = await api.post("/auth/login", { username, password });
       await login(res.accessToken, res.refreshToken);
     } catch (err) {
       setError(err instanceof ApiError ? describeAuthError(err) : "Could not reach the server.");
@@ -47,37 +30,21 @@ export default function LoginPage() {
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><Logo size={56} /></div>
         <h1>Dipasha Medical Store</h1>
         <p className="sub" style={{ marginBottom: 2 }}>because we care..</p>
-        <p className="sub">Staff console — sign in with your phone</p>
+        <p className="sub">Staff console — sign in with your username</p>
 
-        {step === "phone" ? (
-          <form onSubmit={requestOtp}>
-            <div className="field">
-              <label htmlFor="phone">Phone number</label>
-              <input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} style={{ width: "100%" }} autoFocus />
-            </div>
-            <button className="btn-primary" style={{ width: "100%" }} disabled={busy}>
-              {busy ? "Sending…" : "Send code"}
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={verifyOtp}>
-            <div className="field">
-              <label htmlFor="code">6-digit code sent to {phone}</label>
-              <input id="code" value={code} onChange={(e) => setCode(e.target.value)} maxLength={6} style={{ width: "100%" }} autoFocus />
-            </div>
-            {devCode && (
-              <p className="hint-text">
-                Dev mode — no real SMS/WhatsApp provider is wired up yet, so here's the code: <strong>{devCode}</strong>
-              </p>
-            )}
-            <button className="btn-primary" style={{ width: "100%" }} disabled={busy}>
-              {busy ? "Verifying…" : "Sign in"}
-            </button>
-            <button type="button" className="btn-secondary" style={{ width: "100%", marginTop: 8 }} onClick={() => setStep("phone")}>
-              Use a different number
-            </button>
-          </form>
-        )}
+        <form onSubmit={submit}>
+          <div className="field">
+            <label htmlFor="username">Username</label>
+            <input id="username" value={username} onChange={(e) => setUsername(e.target.value)} style={{ width: "100%" }} autoFocus autoCapitalize="none" autoCorrect="off" />
+          </div>
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%" }} />
+          </div>
+          <button className="btn-primary" style={{ width: "100%" }} disabled={busy || !username || !password}>
+            {busy ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
 
         {error && <p className="error-text">{error}</p>}
       </div>
@@ -87,14 +54,10 @@ export default function LoginPage() {
 
 function describeAuthError(err: ApiError): string {
   switch (err.body?.error) {
-    case "no_account_for_phone":
-      return "No staff account found for that phone number.";
+    case "invalid_credentials":
+      return "Incorrect username or password.";
     case "account_suspended":
       return "This account is suspended.";
-    case "incorrect_code":
-      return "That code isn't right.";
-    case "no_active_otp_or_too_many_attempts":
-      return "That code has expired or too many attempts were made — request a new one.";
     default:
       return "Something went wrong. Try again.";
   }

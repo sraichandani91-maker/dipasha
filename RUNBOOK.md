@@ -78,7 +78,7 @@ Unlike Netlify/Vercel, Render can host **all of it** — `apps/api` runs as a re
 3. **Update the two placeholder URLs** — `render.yaml` guesses both services' URLs before Render has actually assigned them (a service name can get a random suffix if it's taken). After the first deploy, check the real URLs in the dashboard and, if they differ from the guess:
    - Set `dipasha-web`'s `VITE_API_BASE_URL` env var to the real `dipasha-api` URL, then manually redeploy `dipasha-web` (env vars only take effect on the next build for a static site).
    - Set `dipasha-api`'s `CORS_ORIGINS` env var to the real `dipasha-web` URL (tightening it from the wide-open default), then it picks that up on its next restart.
-4. Open the `dipasha-web` URL and log in with the seeded phone numbers below (same as local dev — no real SMS provider configured, so the OTP prints on screen).
+4. Open the `dipasha-web` URL and log in with the seeded username/password pairs below (same as local dev).
 
 Two honest limitations of testing here, not bugs: Render's **free Postgres is deleted after 90 days** — fine for a trial, not for anything you want to keep; and the API's **free-tier disk is ephemeral**, so write-off photo evidence uploaded there won't survive a redeploy (the Docker+Caddy VPS setup uses a named volume for this instead — see `docker-compose.yml`).
 
@@ -106,14 +106,14 @@ npm run dev:api                      # terminal 1 — API on :3000
 npm run dev --workspace apps/web     # terminal 2 — console on :5173, proxies /api to :3000
 ```
 
-Open http://localhost:5173. Log in with any of the seeded phone numbers — no real SMS/WhatsApp provider is configured, so the OTP is printed directly on screen after "Send code," not actually sent anywhere:
+Open http://localhost:5173. Log in with any of the seeded username/password pairs (username + password login, not phone + OTP — see below):
 
-| Role | Phone |
-|---|---|
-| Owner | `+919999900001` |
-| Store Manager | `+919999900002` |
-| Picker/packer | `+919999900003` |
-| Rider | `+919999900004` |
+| Role | Username | Password |
+|---|---|---|
+| Owner | `owner` | `dipasha123` |
+| Store Manager | `manager` | `dipasha123` |
+| Picker/packer | `picker` | `dipasha123` |
+| Rider | `rider` | `dipasha123` |
 
 The Owner login sees everything — Home dashboard, POS billing, Order book, Reports, Settings, Staff, Activity logs. The other three see only what that role is meant to see, which is itself worth clicking through to see the role-based access actually working.
 

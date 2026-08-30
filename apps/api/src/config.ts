@@ -16,14 +16,10 @@ export const config = {
   // wildcard origin would open up. Tighten this once real domains exist.
   corsOrigins: process.env.CORS_ORIGINS ?? "*",
 
-  // Auth (Section 3, Section 12). No real SMS/WhatsApp provider is wired
-  // up yet (Section 14 — that's the owner's account to set up, M8) so OTP
-  // delivery is a pluggable interface with a dev console sender for now.
+  // Auth (Section 3, Section 12) — username + password, JWT access/refresh.
   jwtSecret: process.env.JWT_SECRET ?? "",
   jwtAccessTtlSeconds: Number(process.env.JWT_ACCESS_TTL_SECONDS ?? 15 * 60),
   jwtRefreshTtlSeconds: Number(process.env.JWT_REFRESH_TTL_SECONDS ?? 30 * 24 * 60 * 60),
-  otpTtlSeconds: Number(process.env.OTP_TTL_SECONDS ?? 5 * 60),
-  otpMaxAttempts: Number(process.env.OTP_MAX_ATTEMPTS ?? 5),
 
   // WhatsApp bill send (Section 6A.6 / Section 14). Same story as OTP
   // delivery above — no real provider account exists yet, so this is a
