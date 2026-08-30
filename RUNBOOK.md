@@ -67,16 +67,38 @@ Leaving `VITE_API_BASE_URL` unset keeps the existing behavior (a relative `/api`
 
 ## Local development (no Docker required for the API or console)
 
+The fastest way to see the whole app working — nothing to deploy, no hosting account, full backend + database + UI — is to run it right here on your own machine.
+
+**Prerequisites**: Node 20+, and either Docker (for Postgres only — easiest) or a local Postgres 16 install.
+
 ```
-cp .env.example .env          # set DATABASE_URL to point at a local Postgres, or use Docker for just Postgres:
-docker compose up -d postgres
+git clone <repo-url> && cd dipasha
 npm install
+
+cp .env.example .env
+# Edit .env and set two things:
+#   DATABASE_URL=postgres://dipasha:change-me@localhost:5432/dipasha   (matches the Postgres vars above)
+#   JWT_SECRET=<any random string>    (e.g. output of: openssl rand -hex 32)
+
+docker compose up -d postgres        # or point DATABASE_URL at a Postgres you already have running
+
 npm run migrate:up --workspace apps/api
-npm run dev:api                     # terminal 1 — API on :3000
-npm run dev --workspace apps/web    # terminal 2 — console on :5173, proxies /api to :3000
+npm run seed --workspace apps/api    # loads 50 demo medicines, bins, batches, and 4 test logins — skip this and every screen is empty
+
+npm run dev:api                      # terminal 1 — API on :3000
+npm run dev --workspace apps/web     # terminal 2 — console on :5173, proxies /api to :3000
 ```
 
-Open http://localhost:5173.
+Open http://localhost:5173. Log in with any of the seeded phone numbers — no real SMS/WhatsApp provider is configured, so the OTP is printed directly on screen after "Send code," not actually sent anywhere:
+
+| Role | Phone |
+|---|---|
+| Owner | `+919999900001` |
+| Store Manager | `+919999900002` |
+| Picker/packer | `+919999900003` |
+| Rider | `+919999900004` |
+
+The Owner login sees everything — Home dashboard, POS billing, Order book, Reports, Settings, Staff, Activity logs. The other three see only what that role is meant to see, which is itself worth clicking through to see the role-based access actually working.
 
 ## Day-to-day operations
 
