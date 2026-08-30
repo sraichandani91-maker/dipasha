@@ -70,11 +70,13 @@ Leaving `VITE_API_BASE_URL` unset keeps the existing behavior (a relative `/api`
 Unlike Netlify/Vercel, Render can host **all of it** — `apps/api` runs as a real, always-on service (its persistent Postgres pool and background jobs work here, since it's not serverless), with a managed Postgres and `apps/web` as a static site alongside it. `render.yaml` at the repo root defines all three as one Blueprint.
 
 1. In the Render dashboard: **New → Blueprint**, point it at this repo/branch. It reads `render.yaml` and proposes a Postgres database (`dipasha-postgres`), the API as a Docker web service (`dipasha-api`, built from `apps/api/Dockerfile`), and the console as a static site (`dipasha-web`). Apply it.
-2. **Run migrations once, by hand** — same "never automatic" rule as `deploy.sh`. Once `dipasha-api` has deployed, open its **Shell** tab in the Render dashboard and run:
-   ```
-   npm run migrate:up --workspace apps/api
-   npm run seed --workspace apps/api   # optional — loads the same 50-item demo data as local dev
-   ```
+2. **Run migrations once** — same "never automatic" rule as `deploy.sh`. Two ways to do this:
+   - **By hand**: once `dipasha-api` has deployed, open its **Shell** tab in the Render dashboard and run:
+     ```
+     npm run migrate:up --workspace apps/api
+     npm run seed --workspace apps/api   # optional — loads the same 50-item demo data as local dev
+     ```
+   - **Without opening the dashboard's Shell tab**: set the env vars `RUN_MIGRATE_ON_BOOT=true` and (optionally) `RUN_SEED_ON_BOOT=true` on `dipasha-api` — changing env vars triggers Render's own redeploy automatically. `apps/api/docker-entrypoint.sh` runs the migration (and seed, if flagged) once before starting the server, then boots normally. **Set both back to `false` afterward** — otherwise every future restart re-runs them (harmless — both are idempotent, `migrate:up` skips applied migrations and `seed` refuses to run against a non-empty `products` table — but pointless work on every deploy).
 3. **Update the two placeholder URLs** — `render.yaml` guesses both services' URLs before Render has actually assigned them (a service name can get a random suffix if it's taken). After the first deploy, check the real URLs in the dashboard and, if they differ from the guess:
    - Set `dipasha-web`'s `VITE_API_BASE_URL` env var to the real `dipasha-api` URL, then manually redeploy `dipasha-web` (env vars only take effect on the next build for a static site).
    - Set `dipasha-api`'s `CORS_ORIGINS` env var to the real `dipasha-web` URL (tightening it from the wide-open default), then it picks that up on its next restart.
