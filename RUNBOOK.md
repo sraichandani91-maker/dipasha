@@ -65,6 +65,23 @@ Once the API is running somewhere reachable over HTTPS:
 
 Leaving `VITE_API_BASE_URL` unset keeps the existing behavior (a relative `/api` path) exactly as it is for local dev and the Docker+Caddy setup — this is purely additive.
 
+## Testing the whole app on Render
+
+Unlike Netlify/Vercel, Render can host **all of it** — `apps/api` runs as a real, always-on service (its persistent Postgres pool and background jobs work here, since it's not serverless), with a managed Postgres and `apps/web` as a static site alongside it. `render.yaml` at the repo root defines all three as one Blueprint.
+
+1. In the Render dashboard: **New → Blueprint**, point it at this repo/branch. It reads `render.yaml` and proposes a Postgres database (`dipasha-postgres`), the API as a Docker web service (`dipasha-api`, built from `apps/api/Dockerfile`), and the console as a static site (`dipasha-web`). Apply it.
+2. **Run migrations once, by hand** — same "never automatic" rule as `deploy.sh`. Once `dipasha-api` has deployed, open its **Shell** tab in the Render dashboard and run:
+   ```
+   npm run migrate:up --workspace apps/api
+   npm run seed --workspace apps/api   # optional — loads the same 50-item demo data as local dev
+   ```
+3. **Update the two placeholder URLs** — `render.yaml` guesses both services' URLs before Render has actually assigned them (a service name can get a random suffix if it's taken). After the first deploy, check the real URLs in the dashboard and, if they differ from the guess:
+   - Set `dipasha-web`'s `VITE_API_BASE_URL` env var to the real `dipasha-api` URL, then manually redeploy `dipasha-web` (env vars only take effect on the next build for a static site).
+   - Set `dipasha-api`'s `CORS_ORIGINS` env var to the real `dipasha-web` URL (tightening it from the wide-open default), then it picks that up on its next restart.
+4. Open the `dipasha-web` URL and log in with the seeded phone numbers below (same as local dev — no real SMS provider configured, so the OTP prints on screen).
+
+Two honest limitations of testing here, not bugs: Render's **free Postgres is deleted after 90 days** — fine for a trial, not for anything you want to keep; and the API's **free-tier disk is ephemeral**, so write-off photo evidence uploaded there won't survive a redeploy (the Docker+Caddy VPS setup uses a named volume for this instead — see `docker-compose.yml`).
+
 ## Local development (no Docker required for the API or console)
 
 The fastest way to see the whole app working — nothing to deploy, no hosting account, full backend + database + UI — is to run it right here on your own machine.

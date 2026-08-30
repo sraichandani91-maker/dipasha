@@ -1,0 +1,51 @@
+# Render Blueprint — unlike Netlify/Vercel, Render can host the whole
+# app: apps/api as a real long-running service (its persistent Postgres
+# pool and always-on background jobs — the WhatsApp dispatcher, daily
+# reports, refill reminders — all work here, unlike on stateless
+# serverless functions), a managed Postgres, and apps/web as a static
+# site. See RUNBOOK.md's "Testing on Render" section for the one-time
+# setup this can't express (running migrations, updating the two
+# placeholder URLs below once Render assigns real ones).
+databases:
+  - name: dipasha-postgres
+    plan: free
+    databaseName: dipasha
+    user: dipasha
+
+services:
+  - type: web
+    name: dipasha-api
+    runtime: docker
+    dockerfilePath: apps/api/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dipasha-postgres
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      # Tighten this to the real dipasha-web URL once Render assigns it
+      # (first deploy only — see RUNBOOK.md). Wide open by default so
+      # the first deploy isn't blocked on a URL that doesn't exist yet.
+      - key: CORS_ORIGINS
+        value: "*"
+
+  - type: web
+    name: dipasha-web
+    runtime: static
+    buildCommand: npm ci && npm run build --workspace apps/web
+    staticPublishPath: apps/web/dist
+    envVars:
+      # Placeholder — Render assigns the API's real URL on first deploy
+      # (usually https://dipasha-api.onrender.com, but a taken name gets
+      # a suffix). Update this to match, then trigger a redeploy of this
+      # service only — see RUNBOOK.md.
+      - key: VITE_API_BASE_URL
+        value: https://dipasha-api.onrender.com
